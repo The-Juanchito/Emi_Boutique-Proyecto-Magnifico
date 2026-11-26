@@ -11,6 +11,7 @@
 @use 'admin';
 @use 'chatbot';
 @use 'notificaciones';
+@use 'pago-simulado';
 @use 'responsive';
 @use 'theme';
 @forward '../../node_modules/bootstrap/scss/bootstrap.scss';

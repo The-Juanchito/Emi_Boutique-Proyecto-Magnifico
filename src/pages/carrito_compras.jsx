@@ -3,7 +3,9 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useStore } from '../context/StoreContext'
 import { api } from '../services/api'
 import { formatoCOP, precioFinal } from '../data/products'
+import { METODOS_SIMULADOS, BILLETERAS } from '../data/pagos'
 import Factura from '../components/Factura'
+import PagoSimulado from '../components/PagoSimulado'
 import MisPedidos from '../components/MisPedidos'
 
 const Cancelables = ['pendiente']
@@ -11,6 +13,9 @@ const Cancelables = ['pendiente']
 // Etiqueta de pago que se muestra al confirmar el pedido
 const TAG_PAGO = {
   efectivo: { clase: 'cash', icono: 'bi-cash-coin', texto: 'Pago contra entrega' },
+  nequi: { clase: 'nequi', icono: 'bi-check-circle', texto: 'Pagado con Nequi (simulado)' },
+  bancolombia: { clase: 'bancolombia', icono: 'bi-check-circle', texto: 'Pagado con Bancolombia (simulado)' },
+  daviplata: { clase: 'daviplata', icono: 'bi-check-circle', texto: 'Pagado con Daviplata (simulado)' },
   wompi: { clase: 'wompi', icono: 'bi-credit-card', texto: 'Pago en línea con Wompi' },
 }
 
@@ -22,6 +27,8 @@ export default function CarritoCompras() {
   const [pedidoConfirmado, setPedidoConfirmado] = useState(null)
   const [metodo, setMetodo] = useState('efectivo')
   const [wompiOk, setWompiOk] = useState(false)
+  const [simulados, setSimulados] = useState(true)
+  const [pago, setPago] = useState(null) // { metodo, total } del pago simulado abierto
   const [factura, setFactura] = useState(null)
   const [recargarPedidos, setRecargarPedidos] = useState(0)
   const [direcciones, setDirecciones] = useState([])
@@ -31,7 +38,7 @@ export default function CarritoCompras() {
   // ¿Está configurado el pago en línea (Wompi) en el servidor?
   useEffect(() => {
     let activo = true
-    api.wompiConfig().then((r) => activo && setWompiOk(!!r.habilitado)).catch(() => {})
+    api.wompiConfig().then((r) => { if (!activo) return; setWompiOk(!!r.habilitado); setSimulados(r.simulados !== false) }).catch(() => {})
     return () => { activo = false }
   }, [])
 
@@ -126,7 +133,7 @@ export default function CarritoCompras() {
             <i className="bi bi-check-circle" />
             <span>¡Pedido #{pedidoConfirmado.pedido_id} registrado por {formatoCOP(pedidoConfirmado.total)}!</span>
             {(() => {
-              const tag = TAG_PAGO[pedidoConfirmado.metodo_pago] || TAG_PAGO.efectivo
+              const tag = TAG_PAGO[pedidoConfirmado.medio_pago] || TAG_PAGO[pedidoConfirmado.metodo_pago] || TAG_PAGO.efectivo
               return (
                 <span className={`pay-tag ${tag.clase}`}>
                   <i className={`bi ${tag.icono}`} /> {tag.texto}
@@ -276,6 +283,22 @@ export default function CarritoCompras() {
                   <small>Pagas en efectivo al recibir</small>
                 </span>
               </label>
+              {simulados && BILLETERAS.map((clave) => {
+                const b = METODOS_SIMULADOS[clave]
+                return (
+                  <label key={clave} className={`pm-opt ${clave} ${metodo === clave ? 'activo' : ''}`}>
+                    <input type="radio" name="metodo_pago" value={clave} checked={metodo === clave} onChange={() => setMetodo(clave)} />
+                    <span className="pm-ico" style={{ background: b.color, color: b.texto }}>
+                      <i className={`bi ${b.icono}`} />
+                    </span>
+                    <span className="pm-txt">
+                      <b>{b.logo}</b>
+                      <small>Pago simulado (sin dinero real)</small>
+                    </span>
+                    <span className="pm-demo">DEMO</span>
+                  </label>
+                )
+              })}
               {wompiOk && (
                 <label className={`pm-opt wompi ${metodo === 'wompi' ? 'activo' : ''}`}>
                   <input type="radio" name="metodo_pago" value="wompi" checked={metodo === 'wompi'} onChange={() => setMetodo('wompi')} />
@@ -288,17 +311,39 @@ export default function CarritoCompras() {
               )}
             </div>
 
-            <button className="btn-checkout" onClick={handleCheckout} disabled={enviando}>
-              {enviando
-                ? 'Procesando...'
-                : !user
-                  ? 'Ingresa para comprar'
-                  : metodo === 'wompi'
-                    ? 'Pagar ahora'
-                    : 'Finalizar compra'}
-            </button>
+            {BILLETERAS.includes(metodo) ? (
+              !user ? (
+                <Link to="/login" className="btn-checkout" style={{ textDecoration: 'none', textAlign: 'center' }}>
+                  Ingresa para pagar con {METODOS_SIMULADOS[metodo].nombre}
+                </Link>
+              ) : (
+                <>
+                  <button
+                    className="btn-checkout psim-lanzar"
+                    style={{ background: METODOS_SIMULADOS[metodo].acento, color: metodo === 'bancolombia' ? '#111' : '#fff' }}
+                    onClick={() => setPago({ metodo, total: cartTotal })}
+                  >
+                    <i className="bi bi-shield-lock" /> Pagar con {METODOS_SIMULADOS[metodo].nombre}
+                  </button>
+                  <small className="psim-aviso-demo">
+                    <i className="bi bi-exclamation-diamond" /> Simulación: no se cobra dinero real.
+                  </small>
+                </>
+              )
+            ) : (
+              <button className="btn-checkout" onClick={handleCheckout} disabled={enviando}>
+                {enviando
+                  ? 'Procesando...'
+                  : !user
+                    ? 'Ingresa para comprar'
+                    : metodo === 'wompi'
+                      ? 'Pagar ahora'
+                      : 'Finalizar compra'}
+              </button>
+            )}
             <div className="secure-note">
               {metodo === 'efectivo' && '💵 Pago contra entrega · Precios en pesos colombianos'}
+              {BILLETERAS.includes(metodo) && `🧪 Pago simulado con ${METODOS_SIMULADOS[metodo].nombre} · dinero ficticio`}
               {metodo === 'wompi' && '🔒 Pago seguro con Wompi · Precios en pesos colombianos'}
             </div>
           </aside>
@@ -322,6 +367,20 @@ export default function CarritoCompras() {
       )}
 
       {factura && <Factura pedido={factura} onCerrar={() => setFactura(null)} />}
+
+      {pago && (
+        <PagoSimulado
+          metodo={pago.metodo}
+          total={pago.total}
+          onCerrar={() => setPago(null)}
+          onPagar={() => checkout(pago.metodo, direccionSel)}
+          alExito={(pedido) => {
+            setPago(null)
+            setMetodo('efectivo')
+            mostrarConfirmacion(pedido)
+          }}
+        />
+      )}
 
     </div>
   )

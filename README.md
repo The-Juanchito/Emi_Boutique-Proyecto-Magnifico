@@ -1,6 +1,6 @@
 # EMI Boutique
 
-Tienda en línea de moda femenina. **React + Vite** (frontend) · **Netlify Functions** (API en Node) · **Supabase** (base de datos Postgres + imágenes) · **Wompi** (pagos reales en Colombia).
+Tienda en línea de moda femenina. **React + Vite** (frontend) · **Netlify Functions** (API en Node) · **Supabase** (base de datos Postgres + imágenes) · pagos: **contra entrega**, **simulados** (Nequi/Bancolombia/Daviplata, demo) y **Wompi** (reales, opcional).
 
 ```
 Navegador ──► Netlify (sitio + /api/*) ──► Supabase (datos e imágenes)
@@ -60,13 +60,22 @@ node scripts/crear-admin.mjs tucorreo@dominio.com "Tu Nombre" "UnaClaveSegura123
    - Importa solo las columnas que existen en el esquema nuevo, conserva los ids, y sube tus fotos locales a Supabase Storage.
    - Las contraseñas antiguas (`$2y$`) siguen funcionando.
 
-## 4. Cómo funciona el pago
+## 4. Modos de pago
+| Modo | Qué hace | Cómo se controla |
+|---|---|---|
+| Contra entrega | Pedido pendiente; el admin lo marca pagado al cobrar | siempre disponible |
+| Simulado (Nequi/Bancolombia/Daviplata) | Pedido queda **pagado** al instante, referencia `SIM-…`, **sin dinero real** | activo por defecto; ponle `PAGOS_SIMULADOS=0` en Netlify para apagarlo |
+| Wompi (real) | Cobro real | aparece solo si cargas las 3 llaves `WOMPI_*` |
+
+Para una demo/trabajo de clase basta el simulado. Para vender de verdad: apaga el simulado (`PAGOS_SIMULADOS=0`) y carga las llaves de Wompi.
+
+## 5. Cómo funciona el pago real (Wompi)
 1. El cliente confirma → el servidor **recalcula precios desde la base de datos** (ignora los del navegador) y descuenta stock.
 2. Se redirige a Wompi con una firma de integridad; el cliente paga allí.
 3. Wompi avisa al webhook y/o el cliente vuelve a `/pago/resultado`; el servidor **consulta la transacción directamente a Wompi**, verifica monto y moneda y marca el pedido como pagado (idempotente).
 4. Pago rechazado → el pedido sigue pendiente (botón *Pagar ahora*). Pedidos Wompi sin pagar se cancelan a las 3 h y se devuelve el stock.
 
-## 5. Desarrollo local
+## 6. Desarrollo local
 ```
 cp .env.example .env     # llena las variables
 npm install
@@ -75,7 +84,7 @@ npm run lint && npm run build
 npm run test:api         # requiere un Postgres local: DATABASE_URL=postgres://... DATABASE_SSL=off
 ```
 
-## 6. Lista de seguridad antes de salir a producción
+## 7. Lista de seguridad antes de salir a producción
 - [ ] **Rota** cualquier clave que estuviera en el proyecto antiguo (PayPal, Gemini, contraseña SMTP de Gmail): estaban escritas en archivos PHP.
 - [ ] Llaves Wompi de producción y webhook apuntando al dominio real.
 - [ ] `SITE_URL` con tu dominio final.

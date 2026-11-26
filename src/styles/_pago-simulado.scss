@@ -1,0 +1,493 @@
+@use 'variables' as *;
+
+// ============ Opciones de pago con billeteras (simuladas) ============
+.pm-opt {
+  position: relative;
+
+  .pm-demo {
+    margin-left: auto;
+    font: 700 9.5px $font-body;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: $dark;
+    color: $white;
+  }
+
+  &.nequi.activo {
+    border-color: #ec008c;
+    background: rgba(236, 0, 140, 0.06);
+    box-shadow: 0 0 0 3px rgba(236, 0, 140, 0.12);
+  }
+
+  &.daviplata.activo {
+    border-color: #ed1c27;
+    background: rgba(237, 28, 39, 0.06);
+    box-shadow: 0 0 0 3px rgba(237, 28, 39, 0.12);
+  }
+
+  &.bancolombia.activo {
+    border-color: #111;
+    background: rgba(255, 210, 0, 0.14);
+    box-shadow: 0 0 0 3px rgba(255, 210, 0, 0.3);
+  }
+}
+
+.psim-lanzar {
+  @include btn($primary, $white);
+  width: 100%;
+  margin-top: 20px;
+
+  i {
+    margin-right: 4px;
+  }
+}
+
+.psim-aviso-demo {
+  display: block;
+  margin-top: 10px;
+  text-align: center;
+  font-size: 11.5px;
+  color: $text;
+
+  i {
+    color: $gold;
+    margin-right: 4px;
+  }
+}
+
+// ============ Modal de pago simulado ============
+.psim-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(29, 20, 26, 0.55);
+  backdrop-filter: blur(4px);
+  animation: psimFade 0.25s ease both;
+}
+
+.psim {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: $white;
+  border-radius: 22px;
+  box-shadow: 0 24px 70px rgba(20, 10, 16, 0.4);
+  animation: psimPop 0.4s cubic-bezier(0.18, 0.9, 0.3, 1.2) both;
+}
+
+.psim-sim-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #fff4d6;
+  color: #9a7208;
+  border-bottom: 1px solid #f0e0b0;
+  border-radius: 22px 22px 0 0;
+  font: 700 11px $font-body;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.psim-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+
+  .psim-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font: 700 19px $font-body;
+    letter-spacing: 0.3px;
+  }
+
+  .psim-cerrar {
+    border: 0;
+    background: rgba(255, 255, 255, 0.18);
+    color: currentcolor;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: 0.2s;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.32);
+      transform: rotate(90deg);
+    }
+  }
+}
+
+.psim-body {
+  padding: 22px 22px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.psim-monto {
+  text-align: center;
+
+  span {
+    display: block;
+    font-size: 12.5px;
+    color: $text;
+  }
+
+  strong {
+    font: 700 30px $font-display;
+    color: $dark;
+  }
+}
+
+.psim-campo {
+  display: block;
+
+  > span {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: $dark;
+  }
+}
+
+.psim-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1.5px solid $border;
+  border-radius: 12px;
+  background: $light;
+  transition: 0.2s;
+
+  i {
+    color: $text;
+  }
+
+  input {
+    flex: 1;
+    border: 0;
+    background: none;
+    outline: none;
+    padding: 13px 0;
+    font: 500 15px $font-body;
+    color: $dark;
+    letter-spacing: 1px;
+  }
+
+  &:focus-within {
+    border-color: $primary;
+    background: $white;
+    box-shadow: 0 0 0 3px rgba(194, 87, 125, 0.12);
+  }
+}
+
+.psim-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: #c0392b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.psim-btn {
+  @include btn($primary, $white);
+  width: 100%;
+
+  &.ghost {
+    background: $light;
+    color: $dark;
+  }
+}
+
+.psim-nota {
+  text-align: center;
+  font-size: 11px;
+  color: $text;
+}
+
+// ---- Procesando ----
+.psim-procesando {
+  align-items: center;
+}
+
+.psim-phone {
+  position: relative;
+  width: 150px;
+  height: 190px;
+  border: 3px solid $primary;
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: $light;
+  animation: psimFlotar 1.6s ease-in-out infinite;
+
+  .psim-phone-top {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font: 700 11px $font-body;
+    white-space: nowrap;
+  }
+
+  .psim-ring {
+    width: 46px;
+    height: 46px;
+    border: 4px solid $border;
+    border-radius: 50%;
+    animation: psimGirar 0.8s linear infinite;
+  }
+
+  .psim-phone-txt {
+    padding: 0 14px;
+    text-align: center;
+    font-size: 11.5px;
+    color: $text;
+  }
+}
+
+.psim-pasos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    color: $text;
+    opacity: 0.5;
+    transition: 0.3s;
+
+    i {
+      font-size: 15px;
+    }
+
+    &.activo {
+      opacity: 1;
+      color: $dark;
+      font-weight: 600;
+
+      i {
+        color: $primary;
+        animation: psimPulso 0.9s ease-in-out infinite;
+      }
+    }
+
+    &.ok {
+      opacity: 1;
+      color: #2e7d32;
+
+      i {
+        color: #2e7d32;
+      }
+    }
+  }
+}
+
+// ---- Éxito ----
+.psim-exito {
+  position: relative;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+
+  h3 {
+    color: #2e7d32;
+    font-size: 20px;
+  }
+
+  p {
+    margin: 0;
+    font-size: 13.5px;
+    color: $text;
+    line-height: 1.6;
+  }
+}
+
+.psim-confeti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+
+  span {
+    position: absolute;
+    top: -14px;
+    width: 8px;
+    height: 13px;
+    border-radius: 2px;
+    animation-name: psimCaer;
+    animation-timing-function: ease-in;
+    animation-iteration-count: infinite;
+  }
+}
+
+.psim-check {
+  width: 76px;
+  height: 76px;
+  margin-top: 4px;
+
+  .psim-check-circulo {
+    fill: none;
+    stroke: #2e7d32;
+    stroke-width: 3;
+    stroke-dasharray: 160;
+    stroke-dashoffset: 160;
+    animation: psimTrazo 0.6s ease forwards;
+  }
+
+  .psim-check-tilde {
+    fill: none;
+    stroke: #2e7d32;
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 40;
+    stroke-dashoffset: 40;
+    animation: psimTrazo 0.4s ease 0.5s forwards;
+  }
+}
+
+.psim-ref {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px dashed $border;
+  border-radius: 12px;
+  background: $light;
+
+  span {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: $text;
+  }
+
+  code {
+    font: 700 14px $font-body;
+    color: $dark;
+    letter-spacing: 1px;
+  }
+}
+
+.psim-falso {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #9a7208;
+  background: #fff4d6;
+  padding: 7px 12px;
+  border-radius: 999px;
+}
+
+// ---- Error ----
+.psim-error-fase {
+  align-items: center;
+  text-align: center;
+
+  > i {
+    font-size: 46px;
+    color: #c0392b;
+  }
+
+  h3 {
+    color: $dark;
+  }
+
+  p {
+    margin: 0;
+    font-size: 13.5px;
+    color: $text;
+  }
+}
+
+.psim-acciones {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+
+  .psim-btn {
+    flex: 1;
+  }
+}
+
+// ============ Animaciones ============
+@keyframes psimFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes psimPop {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes psimGirar {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes psimFlotar {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes psimPulso {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+}
+
+@keyframes psimCaer {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(340px) rotate(540deg); opacity: 0; }
+}
+
+@keyframes psimTrazo {
+  to { stroke-dashoffset: 0; }
+}
+
+// ============ Responsive ============
+@include for-phone {
+  .psim {
+    max-width: 100%;
+  }
+
+  .psim-monto strong {
+    font-size: 26px;
+  }
+}

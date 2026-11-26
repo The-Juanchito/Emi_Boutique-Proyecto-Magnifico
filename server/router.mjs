@@ -96,7 +96,7 @@ const propias = {
 
   // ---- Wompi ----
   'GET /wompi': async (ctx) => {
-    if (ctx.seg[1] === 'config') return { habilitado: wompiConfigurado(), entorno: wompiEntorno() }
+    if (ctx.seg[1] === 'config') return { habilitado: wompiConfigurado(), entorno: wompiEntorno(), simulados: process.env.PAGOS_SIMULADOS !== '0' }
     if (ctx.seg[1] === 'verificar') {
       const u = await requiereUsuario(ctx)
       const pedido = entero(ctx.query.get('pedido'))

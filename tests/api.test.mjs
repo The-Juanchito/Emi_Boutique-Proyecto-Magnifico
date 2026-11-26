@@ -155,13 +155,33 @@ test('no se puede comprar más que el stock ni productos dados de baja', async (
   assert.equal(s.stock, 1, 'el intento fallido no deja stock a medias')
 })
 
-test('ATAQUE: pedir "nequi/paypal" ya no regala pedidos pagados', async () => {
-  for (const metodo of ['nequi', 'paypal', 'daviplata', 'bancolombia']) {
+test('métodos desconocidos (paypal, etc.) caen a contra entrega pendiente', async () => {
+  for (const metodo of ['paypal', 'bitcoin', '']) {
     const r = await cliente.post('/pedidos', { metodo_pago: metodo, items: [{ id: p1.id, cantidad: 1 }] })
     assert.equal(r.data.pedido.estado, 'pendiente')
     assert.equal(r.data.pedido.metodo_pago, 'efectivo')
     await cliente.patch(`/pedidos/${r.data.pedido.pedido_id}`)
   }
+})
+
+test('pago simulado (Nequi/Bancolombia/Daviplata): queda pagado, con precio del servidor y sin cancelación del cliente', async () => {
+  for (const medio of ['nequi', 'daviplata', 'bancolombia']) {
+    const r = await cliente.post('/pedidos', { metodo_pago: medio, items: [{ id: p1.id, cantidad: 1, precio: 1 }] })
+    const ped = r.data.pedido
+    assert.equal(ped.estado, 'pagado')
+    assert.equal(ped.metodo_pago, 'simulado')
+    assert.equal(ped.medio_pago, medio)
+    assert.match(ped.referencia, /^SIM-/)
+    assert.ok(ped.total > 1, 'el precio lo pone el servidor')
+    const [pg] = await sql`select estado, medio from pagos where pedido_id = ${ped.pedido_id}`
+    assert.equal(pg.estado, 'aprobado')
+    assert.equal(pg.medio, medio)
+    assert.equal((await cliente.patch(`/pedidos/${ped.pedido_id}`)).status, 400)
+  }
+  process.env.PAGOS_SIMULADOS = '0'
+  const r = await cliente.post('/pedidos', { metodo_pago: 'nequi', items: [{ id: p1.id, cantidad: 1 }] })
+  delete process.env.PAGOS_SIMULADOS
+  assert.equal(r.status, 503)
 })
 
 test('cancelar un pedido pendiente devuelve el stock; uno ajeno da 404', async () => {

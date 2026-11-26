@@ -28,7 +28,8 @@ const formatoHora = (f) => {
     return ''
   }
 }
-const nombreMetodo = (m) => (m === 'wompi' ? 'Pago en línea (Wompi)' : 'Pago contra entrega')
+const nombreMetodo = (m, medio) =>
+  m === 'wompi' ? 'Pago en línea (Wompi)' : m === 'simulado' ? `Pago simulado${medio ? ` · ${medio}` : ''} (demo)` : 'Pago contra entrega'
 const nroFactura = (id) => `FAC-${String(id).padStart(6, '0')}`
 
 // Modal con la factura tipo tienda; la descarga en PDF se hace con la impresión del navegador.
@@ -80,7 +81,7 @@ export default function Factura({ pedido, onCerrar }) {
           <span><i className="bi bi-calendar3" /> {formatoFechaLarga(pedido.fecha_pedido)}</span>
           <span><i className="bi bi-clock" /> {formatoHora(pedido.fecha_pedido)}</span>
           <span className={`fest ${pedido.estado}`}><i className="bi bi-circle-fill" /> {pedido.estado}</span>
-          <span><i className="bi bi-credit-card" /> {nombreMetodo(pedido.metodo_pago)}</span>
+          <span><i className="bi bi-credit-card" /> {nombreMetodo(pedido.metodo_pago, pedido.medio_pago)}</span>
           {pedido.referencia && (
             <span className="fref"><i className="bi bi-patch-check" /> Ref. {pedido.referencia}</span>
           )}

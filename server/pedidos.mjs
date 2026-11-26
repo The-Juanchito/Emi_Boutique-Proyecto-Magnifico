@@ -148,8 +148,15 @@ async function resolverDireccion(tx, usuario, datos) {
   return nueva.id
 }
 
+const BILLETERAS_SIMULADAS = ['nequi', 'bancolombia', 'daviplata']
+
 export async function crearPedido(usuario, datos) {
-  const metodo = texto(datos.metodo_pago, 'efectivo').toLowerCase() === 'wompi' ? 'wompi' : 'efectivo'
+  const pedido_metodo = texto(datos.metodo_pago, 'efectivo').toLowerCase()
+  const medioSimulado = BILLETERAS_SIMULADAS.includes(pedido_metodo) ? pedido_metodo : ''
+  if (medioSimulado && process.env.PAGOS_SIMULADOS === '0') {
+    fallar('Los pagos simulados están desactivados.', 503)
+  }
+  const metodo = medioSimulado ? 'simulado' : pedido_metodo === 'wompi' ? 'wompi' : 'efectivo'
   if (metodo === 'wompi' && !wompiConfigurado()) {
     fallar('Los pagos en línea no están disponibles por ahora. Elige pago contra entrega.', 503)
   }
@@ -180,15 +187,24 @@ export async function crearPedido(usuario, datos) {
       await tx`insert into detalle_pedido (pedido_id, producto_id, cantidad, precio, subtotal, detalle)
                values (${p.id}, ${c.producto.id}, ${c.cantidad}, ${c.unitario}, ${c.unitario * c.cantidad}, ${c.detalle || null})`
     }
-    const ref = metodo === 'wompi' ? `EMI-${p.id}-${randomBytes(4).toString('hex').toUpperCase()}` : null
-    await tx`insert into pagos (pedido_id, metodo_pago, monto, estado, referencia)
-             values (${p.id}, ${metodo}, ${total}, 'pendiente', ${ref})`
+    const ref = metodo === 'wompi'
+      ? `EMI-${p.id}-${randomBytes(4).toString('hex').toUpperCase()}`
+      : metodo === 'simulado' ? `SIM-${p.id}-${randomBytes(3).toString('hex').toUpperCase()}` : null
+    if (metodo === 'simulado') {
+      // Pago de demostración: no mueve dinero real; queda aprobado de inmediato.
+      await tx`insert into pagos (pedido_id, metodo_pago, monto, estado, referencia, medio)
+               values (${p.id}, 'simulado', ${total}, 'aprobado', ${ref}, ${medioSimulado})`
+      await tx`update pedidos set estado = 'pagado' where id = ${p.id}`
+    } else {
+      await tx`insert into pagos (pedido_id, metodo_pago, monto, estado, referencia)
+               values (${p.id}, ${metodo}, ${total}, 'pendiente', ${ref})`
+    }
     return { idPedido: p.id, referencia: ref }
   })
 
   const detalle = await pedidoPorId(idPedido)
   const totalFmt = formatoCOP(total)
-  const metodoTxt = metodo === 'wompi' ? 'pago en línea (Wompi)' : 'contra entrega'
+  const metodoTxt = metodo === 'wompi' ? 'pago en línea (Wompi)' : metodo === 'simulado' ? `pago simulado con ${medioSimulado} (demo, sin dinero real)` : 'contra entrega'
   await notificarAdmins(
     `Nuevo pedido #${idPedido}`,
     `${usuario.nombre} (${usuario.correo}) hizo un pedido por ${totalFmt} con ${canasta.length} artículo(s). Pago: ${metodoTxt}${metodo === 'wompi' ? ' — pendiente de confirmación' : ''}.`,
@@ -201,7 +217,9 @@ export async function crearPedido(usuario, datos) {
     `Recibimos tu pedido #${idPedido}`,
     metodo === 'wompi'
       ? `Registramos tu pedido #${idPedido} por ${totalFmt}. Completa el pago en línea para confirmarlo; te avisaremos apenas se apruebe.`
-      : `¡Gracias por tu compra! Registramos tu pedido #${idPedido} por ${totalFmt}. Pagarás contra entrega.`,
+      : metodo === 'simulado'
+        ? `¡Gracias por tu compra! Tu pedido #${idPedido} por ${totalFmt} quedó pagado (pago de demostración).`
+        : `¡Gracias por tu compra! Registramos tu pedido #${idPedido} por ${totalFmt}. Pagarás contra entrega.`,
     enlacePedido(idPedido)
   )
   await avisarBajoStock(canasta.map((c) => c.producto.id))
@@ -211,8 +229,9 @@ export async function crearPedido(usuario, datos) {
     subtotal,
     total,
     items: canasta.length,
-    estado: 'pendiente',
+    estado: metodo === 'simulado' ? 'pagado' : 'pendiente',
     metodo_pago: metodo,
+    medio_pago: medioSimulado,
     referencia: referencia ?? '',
     detalle,
     checkout_url: metodo === 'wompi' ? urlCheckout({ referencia, total, correo: usuario.correo, pedidoId: idPedido }) : null,

@@ -136,7 +136,7 @@ create index if not exists ix_detalle_pedido on detalle_pedido (pedido_id);
 create table if not exists pagos (
   id             serial primary key,
   pedido_id      int not null references pedidos(id) on delete cascade,
-  metodo_pago    varchar(20) not null check (metodo_pago in ('efectivo','wompi')),
+  metodo_pago    varchar(20) not null check (metodo_pago in ('efectivo','wompi','simulado')),
   monto          numeric(12,2) not null,
   estado         varchar(20) not null check (estado in ('pendiente','aprobado','rechazado')),
   referencia     varchar(64),
@@ -241,3 +241,7 @@ begin
     on conflict (id) do update set public = true;
   end if;
 end $$;
+
+-- Si ya habías ejecutado una versión anterior: permite el método 'simulado'.
+alter table pagos drop constraint if exists pagos_metodo_pago_check;
+alter table pagos add constraint pagos_metodo_pago_check check (metodo_pago in ('efectivo','wompi','simulado'));
