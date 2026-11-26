@@ -11,9 +11,12 @@ if (!correo || !nombre || !clave || clave.length < 8) {
 }
 const sql = db()
 const hash = await hashPassword(clave)
-const [u] = await sql`
-  insert into usuarios (nombre, correo, password, rol) values (${nombre}, ${correo}, ${hash}, 'administrador')
-  on conflict ((lower(correo))) do update set rol = 'administrador', password = excluded.password
-  returning id, correo, rol`
-console.log('Listo:', u)
+const [u] = await sql`select top (1) id from usuarios where lower(correo) = lower(${correo})`
+if (u) {
+  await sql`update usuarios set rol = 'administrador', password = ${hash}, estado = 1 where id = ${u.id}`
+  console.log('Cuenta existente promovida a administrador:', correo)
+} else {
+  await sql`insert into usuarios (nombre, correo, password, rol) values (${nombre}, ${correo}, ${hash}, 'administrador')`
+  console.log('Administrador creado:', correo)
+}
 await cerrarDb()

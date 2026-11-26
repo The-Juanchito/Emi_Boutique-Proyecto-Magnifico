@@ -1,7 +1,7 @@
 // Carrito, anuncios, reseñas, vistas, sugerencias y mensajería (cliente <-> equipo).
 // Port de las funciones homónimas de api/index.php.
 
-import { db } from './db.mjs'
+import { db, frag, lista as enLista, NOW } from './db.mjs'
 import { fallar } from './http.mjs'
 import { requiereUsuario } from './auth.mjs'
 import { entero, texto, recortar, bool } from './util.mjs'
@@ -11,7 +11,7 @@ import { productosPorIds } from './catalogo.mjs'
 import { crearNotificacion, notificarAdmins } from './notificaciones.mjs'
 import { enviarCorreo, plantillaCorreo } from './mail.mjs'
 
-const like = (s) => `%${String(s).replace(/[%_\\]/g, '\\$&')}%`
+const like = (s) => `%${String(s).replace(/[%_\\[]/g, '\\$&')}%`
 
 /** Productos activos por id, devueltos como Map(id -> producto). */
 async function mapaProductos(ids) {
@@ -64,10 +64,8 @@ export async function guardarCarrito(usuario, datos) {
 
   const sql = db()
   await sql.begin(async (tx) => {
-    const [c] = await tx`
-      insert into carrito (usuario_id) values (${usuario.id})
-      on conflict (usuario_id) do update set usuario_id = excluded.usuario_id
-      returning id`
+    let [c] = await tx`select id from carrito with (updlock, holdlock) where usuario_id = ${usuario.id}`
+    if (!c) [c] = await tx`insert into carrito (usuario_id) output inserted.id values (${usuario.id})`
     await tx`delete from detalle_carrito where carrito_id = ${c.id}`
     for (const i of unicos.values()) {
       await tx`insert into detalle_carrito (carrito_id, producto_id, cantidad, talla, color)
@@ -96,7 +94,7 @@ async function listarAnuncios(soloActivos = true) {
   const sql = db()
   const filas = await sql`
     select id, titulo, mensaje, imagen, activo, fecha from anuncios
-    ${soloActivos ? sql`where activo = true` : sql``}
+    ${soloActivos ? frag`where activo = 1` : frag``}
     order by fecha desc, id desc`
   return filas.map(anuncioFormateado)
 }
@@ -166,7 +164,7 @@ async function resenaPorId(id, usuarioId = null) {
   const [r] = await sql`
     select r.id, r.usuario_id, r.producto_id, r.calificacion, r.comentario, r.fecha, u.nombre as usuario
     from resenas r join usuarios u on u.id = r.usuario_id
-    where r.id = ${id} ${usuarioId ? sql`and r.usuario_id = ${usuarioId}` : sql``}`
+    where r.id = ${id} ${usuarioId ? frag`and r.usuario_id = ${usuarioId}` : frag``}`
   return r ?? null
 }
 
@@ -192,8 +190,8 @@ async function agregarResena(usuario, datos) {
   const comentario = recortar(datos.comentario, 500)
   const [nueva] = await sql`
     insert into resenas (usuario_id, producto_id, calificacion, comentario)
-    values (${usuario.id}, ${productoId}, ${calificacion}, ${comentario})
-    returning id`
+    output inserted.id
+    values (${usuario.id}, ${productoId}, ${calificacion}, ${comentario})`
   await crearNotificacion(
     null,
     `Nueva reseña en ${prod.nombre ?? 'producto #' + productoId}`,
@@ -236,17 +234,22 @@ async function registrarVista(usuario, datos) {
   const sql = db()
   const [p] = pid > 0 ? await sql`select 1 as x from productos where id = ${pid} and estado = 1` : []
   if (!p) fallar('Producto no encontrado', 404)
-  await sql`
-    insert into vistas (usuario_id, producto_id) values (${usuario.id}, ${pid})
-    on conflict (usuario_id, producto_id) do update set fecha = now()`
+  const r = await sql`update vistas set fecha = ${NOW} where usuario_id = ${usuario.id} and producto_id = ${pid}`
+  if (!r.count) {
+    try {
+      await sql`insert into vistas (usuario_id, producto_id) values (${usuario.id}, ${pid})`
+    } catch (e) {
+      if (e.code !== '23505') throw e // otra petición la registró al mismo tiempo
+    }
+  }
   return {}
 }
 
 async function listarVistas(usuario) {
   const sql = db()
   const filas = await sql`
-    select producto_id, fecha from vistas where usuario_id = ${usuario.id}
-    order by fecha desc, id desc limit 60`
+    select top (60) producto_id, fecha from vistas where usuario_id = ${usuario.id}
+    order by fecha desc, id desc`
   if (!filas.length) return []
   const prods = await mapaProductos(filas.map((f) => f.producto_id))
   return filas.filter((f) => prods.has(f.producto_id)).map((f) => ({ producto: prods.get(f.producto_id), fecha: f.fecha }))
@@ -276,15 +279,15 @@ async function sugerenciasUsuario(usuario) {
   }
   if (cats.length) {
     tomar(await sql`
-      select id from productos
-      where estado = 1 and stock > 0 and categoria_id = any(${cats}) and id <> all(${ids.length ? ids : [0]})
-      order by es_nuevo desc, id desc limit 12`)
+      select top (12) id from productos
+      where estado = 1 and stock > 0 and categoria_id in ${enLista(cats)} and id not in ${enLista(ids.length ? ids : [0])}
+      order by es_nuevo desc, id desc`)
   }
   if (idsRec.length < 8) {
     tomar(await sql`
-      select id from productos
-      where estado = 1 and stock > 0 and id <> all(${[...excluidos].length ? [...excluidos] : [0]})
-      order by es_nuevo desc, id desc limit 12`)
+      select top (12) id from productos
+      where estado = 1 and stock > 0 and id not in ${enLista([...excluidos].length ? [...excluidos] : [0])}
+      order by es_nuevo desc, id desc`)
   }
   const recs = await mapaProductos(idsRec)
   return { calificados, recomendados: idsRec.map((i) => recs.get(i)).filter(Boolean) }
@@ -304,8 +307,8 @@ async function listarMensajesCliente(usuario) {
   const sql = db()
   const filas = await sql`select id, autor, cuerpo, fecha from mensajes where usuario_id = ${usuario.id} order by fecha asc, id asc`
   const [n] = await sql`
-    select count(*)::int as n from mensajes
-    where usuario_id = ${usuario.id} and autor = 'admin' and leido_cliente = false`
+    select count(*) as n from mensajes
+    where usuario_id = ${usuario.id} and autor = 'admin' and leido_cliente = 0`
   return { mensajes: filas.map(mensajeFormateado), no_leidos: n.n }
 }
 
@@ -314,14 +317,14 @@ async function enviarMensajeCliente(usuario, datos) {
   if (!cuerpo) fallar('El mensaje no puede estar vacío')
   const sql = db()
   await sql`insert into mensajes (usuario_id, autor, cuerpo, leido_cliente, leido_admin)
-            values (${usuario.id}, 'cliente', ${cuerpo}, true, false)`
+            values (${usuario.id}, 'cliente', ${cuerpo}, 1, 0)`
   await notificarAdmins(`Nuevo mensaje de ${usuario.nombre}`, recortarTextoMensaje(cuerpo, 180), 'mensaje', '/admin')
   return listarMensajesCliente(usuario)
 }
 
 async function marcarMensajesClienteLeidos(usuario) {
   const sql = db()
-  await sql`update mensajes set leido_cliente = true where usuario_id = ${usuario.id} and autor = 'admin'`
+  await sql`update mensajes set leido_cliente = 1 where usuario_id = ${usuario.id} and autor = 'admin'`
 }
 
 export async function listarConversacionesAdmin(busca = '') {
@@ -329,12 +332,12 @@ export async function listarConversacionesAdmin(busca = '') {
   const b = texto(busca)
   const filas = await sql`
     select u.id, u.nombre, u.correo, l.cuerpo as ultimo, l.fecha as ultima_fecha,
-           (select count(*)::int from mensajes m
-             where m.usuario_id = u.id and m.autor = 'cliente' and m.leido_admin = false) as sin_leer
+           (select count(*) from mensajes m
+             where m.usuario_id = u.id and m.autor = 'cliente' and m.leido_admin = 0) as sin_leer
     from usuarios u
-    join lateral (select cuerpo, fecha from mensajes m where m.usuario_id = u.id
-                  order by m.fecha desc, m.id desc limit 1) l on true
-    ${b ? sql`where (u.nombre ilike ${like(b)} or u.correo ilike ${like(b)})` : sql``}
+    cross apply (select top (1) cuerpo, fecha from mensajes m where m.usuario_id = u.id
+                 order by m.fecha desc, m.id desc) l
+    ${b ? frag`where (u.nombre like ${like(b)} escape '\\' or u.correo like ${like(b)} escape '\\')` : frag``}
     order by l.fecha desc, u.id desc`
   return {
     conversaciones: filas.map((c) => ({
@@ -352,7 +355,7 @@ export async function listarMensajesAdmin(usuarioId) {
   const sql = db()
   const [u] = await sql`select id, nombre, correo from usuarios where id = ${usuarioId}`
   if (!u) fallar('Usuario no encontrado', 404)
-  await sql`update mensajes set leido_admin = true where usuario_id = ${usuarioId} and autor = 'cliente'`
+  await sql`update mensajes set leido_admin = 1 where usuario_id = ${usuarioId} and autor = 'cliente'`
   const filas = await sql`select id, autor, cuerpo, fecha from mensajes where usuario_id = ${usuarioId} order by fecha asc, id asc`
   return {
     usuario: { usuario_id: Number(u.id), nombre: u.nombre, correo: u.correo },
@@ -367,7 +370,7 @@ export async function enviarMensajeAdmin(usuarioId, datos = {}) {
   const [u] = await sql`select id, nombre, correo from usuarios where id = ${usuarioId}`
   if (!u) fallar('Usuario no encontrado', 404)
   await sql`insert into mensajes (usuario_id, autor, cuerpo, leido_cliente, leido_admin)
-            values (${usuarioId}, 'admin', ${cuerpo}, false, true)`
+            values (${usuarioId}, 'admin', ${cuerpo}, 0, 1)`
   // Aviso al cliente (panel + correo); un fallo de correo no debe romper el envío.
   await crearNotificacion(usuarioId, 'Mensaje de EMI Boutique', cuerpo, 'mensaje', '/perfil?panel=mensajes')
   try {

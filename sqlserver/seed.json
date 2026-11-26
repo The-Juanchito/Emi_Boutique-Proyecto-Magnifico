@@ -1,0 +1,157 @@
+{
+ "categorias": [
+  "Vestidos",
+  "Blusas",
+  "Pantalones",
+  "Faldas",
+  "Chaquetas",
+  "Accesorios",
+  "Pijamas"
+ ],
+ "productos": [
+  {
+   "codigo": "E-VD-001",
+   "nombre": "Vestido Floral Primavera",
+   "descripcion": "Vestido ligero con estampado floral ideal para primavera.",
+   "categoria": "Vestidos",
+   "precio": 149900,
+   "stock": 25,
+   "imagen": "https://picsum.photos/seed/emi-vestido-floral-primavera/600/800"
+  },
+  {
+   "codigo": "E-VD-002",
+   "nombre": "Vestido Elegante de Noche",
+   "descripcion": "Vestido largo de gala con toque sofisticado.",
+   "categoria": "Vestidos",
+   "precio": 219900,
+   "stock": 12,
+   "imagen": "https://picsum.photos/seed/emi-vestido-elegante-de-noche/600/800"
+  },
+  {
+   "codigo": "E-VD-003",
+   "nombre": "Vestido Casual de Verano",
+   "descripcion": "Vestido fresco y cómodo para el día a día.",
+   "categoria": "Vestidos",
+   "precio": 129900,
+   "stock": 20,
+   "imagen": "https://picsum.photos/seed/emi-vestido-casual-de-verano/600/800"
+  },
+  {
+   "codigo": "E-BL-001",
+   "nombre": "Blusa de Seda Sencilla",
+   "descripcion": "Blusa fluida de seda con acabado elegante.",
+   "categoria": "Blusas",
+   "precio": 99000,
+   "stock": 18,
+   "imagen": "https://picsum.photos/seed/emi-blusa-de-seda-sencilla/600/800"
+  },
+  {
+   "codigo": "E-BL-002",
+   "nombre": "Blusa de Encaje",
+   "descripcion": "Blusa romántica con detalles de encaje.",
+   "categoria": "Blusas",
+   "precio": 85000,
+   "stock": 15,
+   "imagen": "https://picsum.photos/seed/emi-blusa-de-encaje/600/800"
+  },
+  {
+   "codigo": "E-BL-003",
+   "nombre": "Blusa Off Shoulder",
+   "descripcion": "Blusa fuera de hombro con estilo veraniego.",
+   "categoria": "Blusas",
+   "precio": 89000,
+   "stock": 22,
+   "imagen": "https://picsum.photos/seed/emi-blusa-off-shoulder/600/800"
+  },
+  {
+   "codigo": "E-PN-001",
+   "nombre": "Pantalón Palazzo",
+   "descripcion": "Pantalón ancho y fluido, súper elegante.",
+   "categoria": "Pantalones",
+   "precio": 119900,
+   "stock": 14,
+   "imagen": "https://picsum.photos/seed/emi-pantalón-palazzo/600/800"
+  },
+  {
+   "codigo": "E-PN-002",
+   "nombre": "Jeans Tiro Alto",
+   "descripcion": "Jeans clásicos de tiro alto con perfecto ajuste.",
+   "categoria": "Pantalones",
+   "precio": 135000,
+   "stock": 30,
+   "imagen": "https://picsum.photos/seed/emi-jeans-tiro-alto/600/800"
+  },
+  {
+   "codigo": "E-FA-001",
+   "nombre": "Falda Plisada",
+   "descripcion": "Falda plisada con movimiento y estilo.",
+   "categoria": "Faldas",
+   "precio": 98000,
+   "stock": 19,
+   "imagen": "https://picsum.photos/seed/emi-falda-plisada/600/800"
+  },
+  {
+   "codigo": "E-FA-002",
+   "nombre": "Falda Midi Floral",
+   "descripcion": "Falda midi estampada con caída perfecta.",
+   "categoria": "Faldas",
+   "precio": 95000,
+   "stock": 16,
+   "imagen": "https://picsum.photos/seed/emi-falda-midi-floral/600/800"
+  },
+  {
+   "codigo": "E-CQ-001",
+   "nombre": "Chaqueta de Mezclilla",
+   "descripcion": "Chaqueta denim versátil para cualquier look.",
+   "categoria": "Chaquetas",
+   "precio": 159900,
+   "stock": 11,
+   "imagen": "https://picsum.photos/seed/emi-chaqueta-de-mezclilla/600/800"
+  },
+  {
+   "codigo": "E-CQ-002",
+   "nombre": "Blazer Oversize",
+   "descripcion": "Blazer holgado que eleva cualquier outfit.",
+   "categoria": "Chaquetas",
+   "precio": 179900,
+   "stock": 9,
+   "imagen": "https://picsum.photos/seed/emi-blazer-oversize/600/800"
+  },
+  {
+   "codigo": "E-AC-001",
+   "nombre": "Bolso Tote Elegante",
+   "descripcion": "Bolso amplio y práctico para el día a día.",
+   "categoria": "Accesorios",
+   "precio": 74000,
+   "stock": 24,
+   "imagen": "https://picsum.photos/seed/emi-bolso-tote-elegante/600/800"
+  },
+  {
+   "codigo": "E-AC-002",
+   "nombre": "Collar de Perlas",
+   "descripcion": "Collar clásico de perlas que nunca pasa de moda.",
+   "categoria": "Accesorios",
+   "precio": 59000,
+   "stock": 40,
+   "imagen": "https://picsum.photos/seed/emi-collar-de-perlas/600/800"
+  },
+  {
+   "codigo": "E-AC-003",
+   "nombre": "Sombrero de Paja",
+   "descripcion": "Sombrero ideal para protegerte con estilo.",
+   "categoria": "Accesorios",
+   "precio": 62000,
+   "stock": 28,
+   "imagen": "https://picsum.photos/seed/emi-sombrero-de-paja/600/800"
+  },
+  {
+   "codigo": "E-PJ-001",
+   "nombre": "Pijama de Satín",
+   "descripcion": "Pijama de satín suave y elegante.",
+   "categoria": "Pijamas",
+   "precio": 99000,
+   "stock": 17,
+   "imagen": "https://picsum.photos/seed/emi-pijama-de-satín/600/800"
+  }
+ ]
+}

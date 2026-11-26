@@ -1,19 +1,19 @@
-// Pruebas de extremo a extremo de la API contra un Postgres real.
-//   DATABASE_URL=postgres://postgres@localhost:5433/emi_test npm run test:api
+// Pruebas de extremo a extremo de la API contra un SQL Server / Azure SQL real.
+// ¡Usa una base de PRUEBAS: borra todos los datos de las tablas!
+//   DB_SERVER=xxx.database.windows.net DB_NAME=emi_test DB_USER=... DB_PASSWORD=... npm run test:api
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 
-process.env.DATABASE_SSL = 'off'
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || '0123456789abcdef0123456789abcdef'
 process.env.MAIL_CAPTURE = '1'
 process.env.SITE_URL = 'https://tienda.test'
 process.env.SUPABASE_URL = 'https://proyecto.supabase.test'
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key'
-if (!process.env.DATABASE_URL) throw new Error('Define DATABASE_URL para correr las pruebas')
+if (!process.env.DB_SERVER && !process.env.DATABASE_URL) throw new Error('Define DB_SERVER, DB_NAME, DB_USER y DB_PASSWORD para correr las pruebas')
 
 const { manejar } = await import('../server/router.mjs')
-const { db, cerrarDb } = await import('../server/db.mjs')
+const { db, cerrarDb, NOW } = await import('../server/db.mjs')
 const { bandeja } = await import('../server/mail.mjs')
 const sql = db()
 
@@ -65,16 +65,18 @@ globalThis.fetch = async (url, init) => {
 }
 
 test.before(async () => {
-  await sql`truncate pagos, detalle_pedido, pedidos, detalle_carrito, carrito, notificaciones, vistas, resenas,
-            imagenes_producto, producto_colores, producto_tallas, productos, categorias, direcciones,
-            recuperaciones, recuperaciones_codigo, login_intentos, mensajes, anuncios, usuarios restart identity cascade`
-  ;[cat] = await sql`insert into categorias (nombre) values (${'Vestidos ' + sufijo}) returning id`
+  for (const t of ['pagos', 'detalle_pedido', 'pedidos', 'detalle_carrito', 'carrito', 'notificaciones', 'vistas', 'resenas',
+    'imagenes_producto', 'producto_colores', 'producto_tallas', 'productos', 'categorias', 'direcciones',
+    'recuperaciones', 'recuperaciones_codigo', 'login_intentos', 'mensajes', 'anuncios', 'usuarios']) {
+    await sql`${sql.unsafe('delete from ' + t)}`
+  }
+  ;[cat] = await sql`insert into categorias (nombre) output inserted.id values (${'Vestidos ' + sufijo})`
   ;[p1] = await sql`insert into productos (codigo, nombre, descripcion, categoria_id, precio, stock, descuento)
-                    values ('A1', 'Vestido rojo', 'x', ${cat.id}, 100000, 5, 20) returning id`
+                    output inserted.id values ('A1', 'Vestido rojo', 'x', ${cat.id}, 100000, 5, 20)`
   ;[p2] = await sql`insert into productos (codigo, nombre, descripcion, categoria_id, precio, stock, stock_minimo)
-                    values ('A2', 'Blusa blanca', 'x', ${cat.id}, 50000, 2, 1) returning id`
+                    output inserted.id values ('A2', 'Blusa blanca', 'x', ${cat.id}, 50000, 2, 1)`
   ;[p3] = await sql`insert into productos (codigo, nombre, descripcion, categoria_id, precio, stock, estado)
-                    values ('A3', 'Descontinuado', 'x', ${cat.id}, 30000, 9, 0) returning id`
+                    output inserted.id values ('A3', 'Descontinuado', 'x', ${cat.id}, 30000, 9, 0)`
   await sql`insert into imagenes_producto (producto_id, imagen, principal) values (${p1.id}, 'https://x/y.jpg', 1)`
 })
 test.after(async () => {
@@ -286,7 +288,7 @@ test('Wompi: pedidos sin pagar vencen y devuelven el stock', async () => {
   const [antes] = await sql`select stock from productos where id = ${p1.id}`
   const r = await cliente.post('/pedidos', { metodo_pago: 'wompi', items: [{ id: p1.id, cantidad: 1 }] })
   const id = r.data.pedido.pedido_id
-  await sql`update pedidos set fecha_pedido = now() - interval '4 hours' where id = ${id}`
+  await sql`update pedidos set fecha_pedido = dateadd(hour, -4, ${NOW}) where id = ${id}`
   const lista = (await cliente.get('/pedidos')).data.pedidos
   assert.equal(lista.find((x) => x.id === id).estado, 'cancelado')
   const [despues] = await sql`select stock from productos where id = ${p1.id}`

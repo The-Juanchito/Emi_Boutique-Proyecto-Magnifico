@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify, createRemoteJWKSet } from 'jose'
 import bcrypt from 'bcryptjs'
-import { db } from './db.mjs'
+import { db, lista, NOW } from './db.mjs'
 import { fallar, HttpError } from './http.mjs'
 
 const COOKIE = 'EMISESS'
@@ -52,6 +52,9 @@ function leerCookie(req, nombre) {
 
 export const COLUMNAS_USUARIO =
   'id, nombre, correo, rol, telefono, direccion, direccion_info, ciudad, perfil_img'
+
+/** Las mismas columnas con prefijo, para usarlas en OUTPUT inserted.* */
+export const COLUMNAS_USUARIO_INSERTED = COLUMNAS_USUARIO.split(',').map((c) => `inserted.${c.trim()}`).join(', ')
 
 export function formatearUsuario(u) {
   return {
@@ -123,15 +126,15 @@ export async function controlarIntentos(ctx, correo) {
   const ip = (ctx.req.headers.get('x-nf-client-connection-ip') || ctx.req.headers.get('x-forwarded-for') || '').split(',')[0].trim()
   const claves = [`c:${String(correo).toLowerCase()}`, `i:${ip}`]
   const [r] = await sql`
-    select count(*)::int as n from login_intentos
-    where clave = any(${claves}) and fecha > now() - make_interval(mins => ${VENTANA_MIN})
-    group by clave order by n desc limit 1`
+    select top (1) count(*) as n from login_intentos
+    where clave in ${lista(claves)} and fecha > dateadd(minute, ${-VENTANA_MIN}, ${NOW})
+    group by clave order by count(*) desc`
   if ((r?.n ?? 0) >= MAX_FALLOS) {
     fallar('Demasiados intentos fallidos. Espera unos minutos e inténtalo de nuevo.', 429)
   }
   return {
     fallo: async () => {
-      await sql`insert into login_intentos (clave) select unnest(${claves}::text[])`
+      await sql`insert into login_intentos (clave) values (${claves[0]}), (${claves[1]})`
     },
     exito: async () => {
       await sql`delete from login_intentos where clave = ${claves[0]}`

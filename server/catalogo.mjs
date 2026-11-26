@@ -1,4 +1,4 @@
-import { db } from './db.mjs'
+import { db, frag, NOW, lista as enLista } from './db.mjs'
 import { fallar } from './http.mjs'
 import { bool, entero, texto } from './util.mjs'
 import { guardarImagen } from './storage.mjs'
@@ -7,13 +7,13 @@ import { guardarImagen } from './storage.mjs'
 //  Lectura de productos (una consulta base + colores/tallas/imágenes en lote)
 // ---------------------------------------------------------------------------
 
-const COLUMNAS = (sql) => sql`
+const COLUMNAS = frag`
   p.id, p.codigo, p.nombre, p.descripcion, c.nombre as categoria, c.id as categoria_id,
   p.precio, p.stock, p.stock_minimo, p.es_nuevo, p.descuento,
-  (select avg(r.calificacion) from resenas r where r.producto_id = p.id) as promedio,
+  (select avg(cast(r.calificacion as float)) from resenas r where r.producto_id = p.id) as promedio,
   (select count(*) from resenas r where r.producto_id = p.id) as num_resenas,
-  coalesce((select i.imagen from imagenes_producto i where i.producto_id = p.id
-            order by i.principal desc, i.id limit 1), '') as img`
+  coalesce((select top (1) i.imagen from imagenes_producto i where i.producto_id = p.id
+            order by i.principal desc, i.id), '') as img`
 
 function darForma(f) {
   return {
@@ -38,10 +38,10 @@ async function enriquecer(productos, { galeria = false } = {}) {
   if (!productos.length) return productos
   const sql = db()
   const ids = productos.map((p) => p.id)
-  const colores = await sql`select producto_id, nombre, hex from producto_colores where producto_id = any(${ids}) order by id`
-  const tallas = await sql`select producto_id, nombre from producto_tallas where producto_id = any(${ids}) order by id`
+  const colores = await sql`select producto_id, nombre, hex from producto_colores where producto_id in ${enLista(ids)} order by id`
+  const tallas = await sql`select producto_id, nombre from producto_tallas where producto_id in ${enLista(ids)} order by id`
   const imagenes = galeria
-    ? await sql`select producto_id, imagen from imagenes_producto where producto_id = any(${ids}) order by principal desc, id`
+    ? await sql`select producto_id, imagen from imagenes_producto where producto_id in ${enLista(ids)} order by principal desc, id`
     : []
   for (const p of productos) {
     p.colores = colores.filter((c) => c.producto_id === p.id).map((c) => ({ nombre: c.nombre, hex: c.hex }))
@@ -54,13 +54,13 @@ async function enriquecer(productos, { galeria = false } = {}) {
 export async function listarProductos(q = null, cat = null) {
   const sql = db()
   const busqueda = texto(q)
-  const like = `%${busqueda.replace(/[%_\\]/g, '\\$&')}%`
+  const like = `%${busqueda.replace(/[%_\\[]/g, '\\$&')}%`
   const filas = await sql`
-    select ${COLUMNAS(sql)}
+    select ${COLUMNAS}
     from productos p join categorias c on c.id = p.categoria_id
     where p.estado = 1
-      ${cat ? sql`and c.nombre = ${cat}` : sql``}
-      ${busqueda ? sql`and (p.nombre ilike ${like} or p.descripcion ilike ${like} or c.nombre ilike ${like})` : sql``}
+      ${cat ? frag`and c.nombre = ${cat}` : frag``}
+      ${busqueda ? frag`and (p.nombre like ${like} escape '\\' or p.descripcion like ${like} escape '\\' or c.nombre like ${like} escape '\\')` : frag``}
     order by p.fecha_registro desc, p.id desc`
   return enriquecer(filas.map(darForma))
 }
@@ -73,13 +73,13 @@ export async function detalleProducto(id, { soloActivos = false } = {}) {
 
 /** Varios productos de una sola vez (carrito, vistas, sugerencias). */
 export async function productosPorIds(ids, { soloActivos = false, galeria = false } = {}) {
-  const lista = [...new Set(ids.map(Number).filter((n) => n > 0))]
-  if (!lista.length) return []
+  const ids2 = [...new Set(ids.map(Number).filter((n) => n > 0))]
+  if (!ids2.length) return []
   const sql = db()
   const filas = await sql`
-    select ${COLUMNAS(sql)}
+    select ${COLUMNAS}
     from productos p join categorias c on c.id = p.categoria_id
-    where p.id = any(${lista}) ${soloActivos ? sql`and p.estado = 1` : sql``}`
+    where p.id in ${enLista(ids2)} ${soloActivos ? frag`and p.estado = 1` : frag``}`
   const productos = await enriquecer(filas.map(darForma), { galeria: true })
   if (!galeria) for (const p of productos) delete p.imagenes
   return productos
@@ -99,7 +99,7 @@ async function categoriaOCrear(nombre) {
   const n = texto(nombre) || 'Otros'
   const [c] = await sql`select id, nombre from categorias where lower(nombre) = lower(${n})`
   if (c) return c
-  const [nueva] = await sql`insert into categorias (nombre, descripcion, estado) values (${n}, null, 1) returning id, nombre`
+  const [nueva] = await sql`insert into categorias (nombre, descripcion, estado) output inserted.id, inserted.nombre values (${n}, null, 1)`
   return nueva
 }
 
@@ -188,10 +188,10 @@ export async function crearProducto(datos, archivos = {}) {
   const id = await sql.begin(async (tx) => {
     const [p] = await tx`
       insert into productos (codigo, nombre, descripcion, categoria_id, precio, stock, stock_minimo, descuento, es_nuevo, estado)
+      output inserted.id
       values (${codigo}, ${nombre}, ${texto(datos.descripcion)}, ${categoria.id}, ${precio},
               ${Math.max(0, entero(datos.stock, 10))}, ${Math.max(0, entero(datos.stock_minimo, 5))},
-              ${descuento}, ${bool(datos.es_nuevo) ? 1 : 0}, 1)
-      returning id`
+              ${descuento}, ${bool(datos.es_nuevo) ? 1 : 0}, 1)`
     await guardarImagenesProducto(tx, p.id, subidas.principal || urlImg, subidas.galeria)
     await guardarVariantes(tx, p.id, datos.colores ?? [], datos.tallas ?? [])
     return p.id
@@ -240,8 +240,8 @@ export async function productosBajoStock() {
   const sql = db()
   const filas = await sql`
     select p.id, p.codigo, p.nombre, c.nombre as categoria, p.stock, p.stock_minimo,
-           coalesce((select i.imagen from imagenes_producto i where i.producto_id = p.id
-                     order by i.principal desc, i.id limit 1), '') as img
+           coalesce((select top (1) i.imagen from imagenes_producto i where i.producto_id = p.id
+                     order by i.principal desc, i.id), '') as img
     from productos p join categorias c on c.id = p.categoria_id
     where p.estado = 1 and p.stock <= p.stock_minimo
     order by p.stock asc, p.nombre`
@@ -262,33 +262,32 @@ export async function statsAdmin() {
       (select coalesce(sum(total), 0) from pedidos where estado <> 'cancelado') as ventas,
       (select count(*) from productos where estado = 1 and stock <= stock_minimo) as stock_bajo,
       (select coalesce(sum(stock), 0) from productos where estado = 1) as stock_total,
-      (extract(day from (now() at time zone 'America/Bogota')))::int as hoy`
+      day(${NOW}) as hoy`
   const categorias_data = await sql`
     select c.nombre as categoria, count(p.id) as total,
            coalesce(avg(p.precio - (p.precio * p.descuento / 100.0)), 0) as precio_prom,
            coalesce(max(p.precio), 0) as precio_max
     from categorias c join productos p on p.categoria_id = c.id and p.estado = 1
-    group by c.nombre order by total desc`
-  const precios = await sql`select nombre, precio from productos where estado = 1 order by precio desc limit 10`
+    group by c.nombre order by count(p.id) desc`
+  const precios = await sql`select top (10) nombre, precio from productos where estado = 1 order by precio desc`
   const filas = await sql`
-    select (extract(day from (fecha_pedido at time zone 'America/Bogota')))::int as dia,
-           count(*) as pedidos, coalesce(sum(total), 0) as ventas
+    select day(fecha_pedido) as dia, count(*) as pedidos, coalesce(sum(total), 0) as ventas
     from pedidos
     where estado <> 'cancelado'
-      and (fecha_pedido at time zone 'America/Bogota') >= date_trunc('month', now() at time zone 'America/Bogota')
-    group by 1 order by 1`
+      and fecha_pedido >= datefromparts(year(${NOW}), month(${NOW}), 1)
+    group by day(fecha_pedido) order by day(fecha_pedido)`
   const mapa = new Map(filas.map((f) => [f.dia, f]))
   const ventas_mes = []
   for (let d = 1; d <= t.hoy; d++) {
     ventas_mes.push({ dia: d, ventas: mapa.get(d)?.ventas ?? 0, pedidos: mapa.get(d)?.pedidos ?? 0 })
   }
   const mas_vendido = await sql`
-    select p.nombre, sum(d.cantidad) as cantidad, coalesce(sum(d.subtotal), 0) as ingresos
+    select top (5) p.nombre, sum(d.cantidad) as cantidad, coalesce(sum(d.subtotal), 0) as ingresos
     from detalle_pedido d
     join pedidos pe on pe.id = d.pedido_id
     join productos p on p.id = d.producto_id
     where pe.estado <> 'cancelado' and p.estado = 1
-    group by p.nombre order by cantidad desc, ingresos desc limit 5`
+    group by p.nombre order by sum(d.cantidad) desc, coalesce(sum(d.subtotal), 0) desc`
   return {
     productos: t.productos,
     usuarios: t.usuarios,

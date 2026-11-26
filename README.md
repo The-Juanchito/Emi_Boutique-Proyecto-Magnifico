@@ -1,64 +1,58 @@
 # EMI Boutique
 
-Tienda en línea de moda femenina. **React + Vite** (frontend) · **Netlify Functions** (API en Node) · **Supabase** (base de datos Postgres + imágenes) · pagos: **contra entrega**, **simulados** (Nequi/Bancolombia/Daviplata, demo) y **Wompi** (reales, opcional).
+Tienda en línea de moda femenina. **React + Vite** (frontend) · **Netlify Functions** (API en Node) · **SQL Server / Azure SQL** (base de datos) · **Supabase Storage** (solo fotos, opcional) · pagos: **contra entrega**, **simulados** (Nequi/Bancolombia/Daviplata, demo) y **Wompi** (reales, opcional).
 
 ```
-Navegador ──► Netlify (sitio + /api/*) ──► Supabase (datos e imágenes)
+Navegador ──► Netlify (sitio + /api/*) ──► SQL Server en la nube (datos)
+                                     └──► Supabase Storage (fotos subidas, opcional)
                        │
                        └──► Wompi (cobro)  ──► webhook ──► /api/wompi/webhook
 ```
 
-## 1. Qué necesitas (todo con plan gratis)
+## 1. Qué necesitas
 
-| Servicio | Para qué | Cuenta |
+| Servicio | Para qué | Nota |
 |---|---|---|
-| GitHub | Guardar el código | github.com |
-| Supabase | Base de datos + fotos | supabase.com |
-| Netlify | Publicar la página | netlify.com |
-| Wompi | Cobrar (tarjeta, PSE, Nequi…) | comercios.wompi.co |
+| GitHub | Guardar el código | gratis |
+| **SQL Server en la nube** (Azure SQL Database u otro con IP pública) | Base de datos | Azure ofrece una capa gratuita limitada; **un SQL Server en tu PC NO sirve para Netlify** |
+| Netlify | Publicar la página | gratis |
+| Supabase (solo Storage) | Fotos de productos subidas desde el panel | opcional |
 
 ## 2. Paso a paso
 
-### A. Base de datos (Supabase)
-1. Crea un proyecto en Supabase (guarda la contraseña de la base de datos).
-2. **SQL Editor** → pega todo `supabase/schema.sql` → *Run*. (Crea las 20 tablas y el bucket de imágenes `emi`.)
-3. *(Opcional)* pega `supabase/seed.sql` → *Run* para cargar categorías y 16 productos de ejemplo.
-4. Copia tres datos:
-   - **Connect → Transaction pooler** → `DATABASE_URL` (puerto 6543, reemplaza `[YOUR-PASSWORD]`).
-   - **Project Settings → API** → `SUPABASE_URL` y la llave `service_role` → `SUPABASE_SERVICE_ROLE_KEY` (¡secreta!).
+### A. Base de datos (Azure SQL)
+1. En portal.azure.com crea una **SQL database** (elige la oferta gratuita si aparece). Anota: **servidor** (`algo.database.windows.net`), **nombre de la base**, **usuario** y **contraseña**.
+2. **Firewall** (Networking del servidor): Netlify no tiene IP fija, así que agrega una regla `0.0.0.0` → `255.255.255.255`. (Es lo que hay que hacer para que Netlify llegue; por eso usa una contraseña larga y un usuario sin permisos de administrador del servidor para la tienda si puedes.)
+3. En tu PC, con el `.env` lleno (`DB_SERVER`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`):
+   ```
+   npm install
+   npm run db:instalar -- --seed     # crea las 20 tablas y 16 productos de ejemplo
+   ```
+   (Sin `--seed` solo crea las tablas.)
+4. Si la base es *serverless*, se duerme por inactividad: la primera visita puede mostrar «La base de datos está iniciando…»; espera ~1 minuto y recarga.
 
-### B. Wompi
-1. Crea cuenta de comercio → **Desarrolladores** → copia las llaves de **pruebas**: pública (`pub_test_…`), secreto de integridad y secreto de eventos.
-2. En *Eventos* configura la URL: `https://TU-SITIO.netlify.app/api/wompi/webhook`.
-3. Para cobrar de verdad: completa la verificación del comercio en Wompi, cambia a llaves `pub_prod_…`/producción y vuelve a desplegar. El código detecta solo si es pruebas o producción.
-
-### C. GitHub + Netlify
-1. Sube esta carpeta a un repositorio nuevo (`.env` ya está ignorado).
-2. Netlify → *Add new site → Import from Git* → elige el repo. Netlify lee `netlify.toml` (build `npm run build`, carpeta `dist`).
-3. **Site configuration → Environment variables**, agrega las de `.env.example`. Obligatorias:
+### B. GitHub + Netlify
+1. Importa el repo en Netlify (rama `sqlserver`). Netlify lee `netlify.toml`.
+2. **Variables de entorno**:
 
 | Variable | Valor |
 |---|---|
-| `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | del paso A |
-| `SESSION_SECRET` | cadena aleatoria de 32+ caracteres (`openssl rand -base64 32`) |
-| `WOMPI_PUBLIC_KEY`, `WOMPI_INTEGRITY_SECRET`, `WOMPI_EVENTS_SECRET` | del paso B |
-| `SITE_URL` | `https://tu-sitio.netlify.app` (o tu dominio) |
+| `DB_SERVER`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | del paso A (marca como secretas) |
+| `SESSION_SECRET` | cadena aleatoria de 32+ caracteres |
+| `SITE_URL` | `https://tu-sitio.netlify.app` |
+| `PAGOS_SIMULADOS` | `1` (demo) |
 
-   Opcionales: `MAIL_*` (correos de pedidos/recuperación; Gmail con *contraseña de aplicación*), `GOOGLE_CLIENT_ID` + `VITE_GOOGLE_CLIENT_ID`, `AI_API_KEY` (asistente virtual).
-4. *Deploy*. Comprueba `https://tu-sitio.netlify.app/api/salud` → debe responder `{"ok":true,...}`.
+   Opcionales: `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (subir fotos), `MAIL_*`, `GOOGLE_CLIENT_ID`/`VITE_GOOGLE_CLIENT_ID`, `AI_API_KEY`, `WOMPI_*`.
+3. Deploy y abre `/api/salud` → `{"ok":true}`.
 
-### D. Primer administrador
-Con `DATABASE_URL` en tu `.env` local:
+### C. Primer administrador
 ```
-npm install
 node scripts/crear-admin.mjs tucorreo@dominio.com "Tu Nombre" "UnaClaveSegura123"
 ```
 
-## 3. Migrar tus datos actuales (SQL Server → Supabase)
-1. Copia `migracion/exportar.php` a tu proyecto antiguo y ejecuta: `php -c api\conf\php.ini migracion\exportar.php` → genera `datos.json`.
-2. En este proyecto (con `.env` lleno): `npm run db:importar -- ruta/datos.json --uploads ruta/a/api/uploads`
-   - Importa solo las columnas que existen en el esquema nuevo, conserva los ids, y sube tus fotos locales a Supabase Storage.
-   - Las contraseñas antiguas (`$2y$`) siguen funcionando.
+## 3. Migrar tus datos del SQL Server antiguo
+1. Copia `migracion/exportar.php` a tu proyecto antiguo y ejecútalo → genera `datos.json`.
+2. `npm run db:importar -- ruta/datos.json --uploads ruta/a/api/uploads` (conserva ids; las contraseñas `$2y$` siguen funcionando).
 
 ## 4. Modos de pago
 | Modo | Qué hace | Cómo se controla |
@@ -81,7 +75,7 @@ cp .env.example .env     # llena las variables
 npm install
 npm start                # API local (8888) + sitio (5173)
 npm run lint && npm run build
-npm run test:api         # requiere un Postgres local: DATABASE_URL=postgres://... DATABASE_SSL=off
+npm run test:api         # contra una base de PRUEBAS (borra sus datos): 16 pruebas de extremo a extremo
 ```
 
 ## 7. Lista de seguridad antes de salir a producción

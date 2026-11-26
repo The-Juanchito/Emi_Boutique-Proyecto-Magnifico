@@ -35,7 +35,7 @@ export async function notificarAdmins(titulo, mensaje, tipo = 'info', enlace = n
 export async function notificarAdminsUnico(titulo, mensaje, tipo = 'info', enlace = null) {
   try {
     const sql = db()
-    const [x] = await sql`select 1 as x from notificaciones where usuario_id is null and titulo = ${titulo} and leida = false limit 1`
+    const [x] = await sql`select top (1) 1 as x from notificaciones where usuario_id is null and titulo = ${titulo} and leida = 0`
     if (x) return
   } catch {
     /* si falla la comprobación, se crea igual */
@@ -55,12 +55,12 @@ export async function listarNotificaciones(usuario, todas = false) {
   const limite = todas ? 200 : 40
   const esAdmin = usuario.rol === 'administrador'
   const filas = esAdmin
-    ? await sql`select id, titulo, mensaje, tipo, enlace, leida, fecha from notificaciones
+    ? await sql`select top (${limite}) id, titulo, mensaje, tipo, enlace, leida, fecha from notificaciones
                 where usuario_id is null or usuario_id = ${usuario.id}
-                order by fecha desc, id desc limit ${limite}`
-    : await sql`select id, titulo, mensaje, tipo, enlace, leida, fecha from notificaciones
+                order by fecha desc, id desc`
+    : await sql`select top (${limite}) id, titulo, mensaje, tipo, enlace, leida, fecha from notificaciones
                 where usuario_id = ${usuario.id}
-                order by fecha desc, id desc limit ${limite}`
+                order by fecha desc, id desc`
   const items = filas.map((f) => ({
     id: f.id,
     titulo: f.titulo,
@@ -76,17 +76,17 @@ export async function listarNotificaciones(usuario, todas = false) {
 export async function marcarNotificacionLeida(usuario, id) {
   const sql = db()
   if (usuario.rol === 'administrador') {
-    await sql`update notificaciones set leida = true where id = ${id} and (usuario_id is null or usuario_id = ${usuario.id})`
+    await sql`update notificaciones set leida = 1 where id = ${id} and (usuario_id is null or usuario_id = ${usuario.id})`
   } else {
-    await sql`update notificaciones set leida = true where id = ${id} and usuario_id = ${usuario.id}`
+    await sql`update notificaciones set leida = 1 where id = ${id} and usuario_id = ${usuario.id}`
   }
 }
 
 export async function marcarTodasLeidas(usuario) {
   const sql = db()
   if (usuario.rol === 'administrador') {
-    await sql`update notificaciones set leida = true where usuario_id is null or usuario_id = ${usuario.id}`
+    await sql`update notificaciones set leida = 1 where usuario_id is null or usuario_id = ${usuario.id}`
   } else {
-    await sql`update notificaciones set leida = true where usuario_id = ${usuario.id}`
+    await sql`update notificaciones set leida = 1 where usuario_id = ${usuario.id}`
   }
 }

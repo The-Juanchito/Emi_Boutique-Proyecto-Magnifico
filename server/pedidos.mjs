@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { db } from './db.mjs'
+import { db, frag, lista, NOW } from './db.mjs'
 import { fallar } from './http.mjs'
 import { entero, texto, formatoCOP, precioFinal } from './util.mjs'
 import { productosPorIds } from './catalogo.mjs'
@@ -23,7 +23,7 @@ const enlacePedido = (id) => `/perfil?panel=pedidos&pedido=${id}`
 //  Lectura / formato
 // ---------------------------------------------------------------------------
 
-const SELECT_PEDIDO = (sql) => sql`
+const SELECT_PEDIDO = frag`
   select p.id, p.usuario_id, u.nombre as cliente, u.correo, u.telefono,
          p.subtotal, p.descuento, p.costo_envio, p.total, p.estado, p.fecha_pedido,
          d.direccion, d.direccion_info, d.ciudad
@@ -37,13 +37,16 @@ async function formatearPedidos(filas) {
   const ids = filas.map((f) => f.id)
   const items = await sql`
     select dp.pedido_id, dp.producto_id, dp.cantidad, dp.precio, dp.subtotal, dp.detalle, pr.nombre as producto,
-           coalesce((select i.imagen from imagenes_producto i where i.producto_id = pr.id
-                     order by i.principal desc, i.id limit 1), '') as img
+           coalesce((select top (1) i.imagen from imagenes_producto i where i.producto_id = pr.id
+                     order by i.principal desc, i.id), '') as img
     from detalle_pedido dp join productos pr on pr.id = dp.producto_id
-    where dp.pedido_id = any(${ids}) order by dp.id`
+    where dp.pedido_id in ${lista(ids)} order by dp.id`
   const pagos = await sql`
-    select distinct on (pedido_id) pedido_id, metodo_pago, estado, referencia, medio
-    from pagos where pedido_id = any(${ids}) order by pedido_id, id desc`
+    select pedido_id, metodo_pago, estado, referencia, medio from (
+      select pedido_id, metodo_pago, estado, referencia, medio,
+             row_number() over (partition by pedido_id order by id desc) as rn
+      from pagos where pedido_id in ${lista(ids)}
+    ) x where rn = 1`
   return filas.map((pe) => {
     const pago = pagos.find((p) => p.pedido_id === pe.id)
     const metodo = pago?.metodo_pago || 'efectivo'
@@ -85,21 +88,21 @@ async function formatearPedidos(filas) {
 
 export async function pedidoPorId(id) {
   const sql = db()
-  const filas = await sql`${SELECT_PEDIDO(sql)} where p.id = ${id}`
+  const filas = await sql`${SELECT_PEDIDO} where p.id = ${id}`
   return (await formatearPedidos(filas))[0] ?? null
 }
 
 export async function misPedidos(usuario) {
   await expirarPendientes()
   const sql = db()
-  const filas = await sql`${SELECT_PEDIDO(sql)} where p.usuario_id = ${usuario.id} order by p.fecha_pedido desc, p.id desc`
+  const filas = await sql`${SELECT_PEDIDO} where p.usuario_id = ${usuario.id} order by p.fecha_pedido desc, p.id desc`
   return formatearPedidos(filas)
 }
 
 export async function listarPedidosAdmin() {
   await expirarPendientes()
   const sql = db()
-  const filas = await sql`${SELECT_PEDIDO(sql)} order by p.fecha_pedido desc, p.id desc`
+  const filas = await sql`${SELECT_PEDIDO} order by p.fecha_pedido desc, p.id desc`
   return formatearPedidos(filas)
 }
 
@@ -133,18 +136,18 @@ async function armarCanasta(datos) {
 async function resolverDireccion(tx, usuario, datos) {
   const elegida = entero(datos.direccion_id)
   if (elegida > 0) {
-    const [d] = await tx`select id from direcciones where id = ${elegida} and usuario_id = ${usuario.id} and activo = true`
+    const [d] = await tx`select id from direcciones where id = ${elegida} and usuario_id = ${usuario.id} and activo = 1`
     if (d) return d.id
   }
-  const [pred] = await tx`select id from direcciones where usuario_id = ${usuario.id} and activo = true
-                          order by predeterminada desc, id asc limit 1`
+  const [pred] = await tx`select top (1) id from direcciones where usuario_id = ${usuario.id} and activo = 1
+                          order by predeterminada desc, id asc`
   if (pred) return pred.id
   const [nueva] = await tx`
     insert into direcciones (usuario_id, alias, direccion, direccion_info, ciudad, telefono, predeterminada)
+    output inserted.id
     values (${usuario.id}, 'Principal', ${texto(usuario.direccion) || 'Por confirmar'},
             ${texto(usuario.direccion_info) || null}, ${texto(usuario.ciudad) || null},
-            ${texto(usuario.telefono) || null}, true)
-    returning id`
+            ${texto(usuario.telefono) || null}, 1)`
   return nueva.id
 }
 
@@ -169,15 +172,16 @@ export async function crearPedido(usuario, datos) {
     const direccionId = await resolverDireccion(tx, usuario, datos)
     const [p] = await tx`
       insert into pedidos (usuario_id, direccion_id, subtotal, descuento, costo_envio, total, estado)
-      values (${usuario.id}, ${direccionId}, ${subtotal}, ${subtotal - total}, 0, ${total}, 'pendiente')
-      returning id`
+      output inserted.id
+      values (${usuario.id}, ${direccionId}, ${subtotal}, ${subtotal - total}, 0, ${total}, 'pendiente')`
 
     // Descuenta stock de forma atómica: si alguien compró antes, falla sin dejar nada a medias.
     const porProducto = new Map()
     for (const c of canasta) porProducto.set(c.producto.id, (porProducto.get(c.producto.id) ?? 0) + c.cantidad)
     for (const [id, cantidad] of porProducto) {
       const [ok] = await tx`update productos set stock = stock - ${cantidad}
-                            where id = ${id} and estado = 1 and stock >= ${cantidad} returning id`
+                            output inserted.id
+                            where id = ${id} and estado = 1 and stock >= ${cantidad}`
       if (!ok) {
         const nombre = canasta.find((c) => c.producto.id === id).producto.nombre
         fallar(`No hay suficiente stock de "${nombre}"`, 409)
@@ -256,10 +260,10 @@ async function avisarBajoStock(ids) {
 export async function pagarPedido(usuario, id) {
   const sql = db()
   const [r] = await sql`
-    select p.id, p.total, p.estado, pg.referencia, pg.metodo_pago, pg.estado as pago_estado
+    select top (1) p.id, p.total, p.estado, pg.referencia, pg.metodo_pago, pg.estado as pago_estado
     from pedidos p join pagos pg on pg.pedido_id = p.id
     where p.id = ${id} and p.usuario_id = ${usuario.id}
-    order by pg.id desc limit 1`
+    order by pg.id desc`
   if (!r) fallar('Pedido no encontrado', 404)
   if (r.metodo_pago !== 'wompi' || r.estado !== 'pendiente' || r.pago_estado !== 'pendiente') {
     fallar('Este pedido no tiene un pago en línea pendiente', 400)
@@ -287,7 +291,7 @@ export async function cancelarPedidoCliente(usuario, id) {
     fallar('Este pedido ya fue pagado o despachado. Escríbenos desde la sección de mensajes para gestionarlo.')
   }
   await sql.begin(async (tx) => {
-    const [bloqueado] = await tx`select estado from pedidos where id = ${id} for update`
+    const [bloqueado] = await tx`select estado from pedidos with (updlock, rowlock) where id = ${id}`
     if (bloqueado.estado !== 'pendiente') fallar('Este pedido ya no se puede cancelar', 409)
     await cancelarYRestock(tx, id)
   })
@@ -300,10 +304,9 @@ export async function expirarPendientes() {
   try {
     const sql = db()
     const vencidos = await sql`
-      select p.id, pg.referencia from pedidos p join pagos pg on pg.pedido_id = p.id
+      select top (25) p.id, pg.referencia from pedidos p join pagos pg on pg.pedido_id = p.id
       where p.estado = 'pendiente' and pg.metodo_pago = 'wompi' and pg.estado = 'pendiente'
-        and p.fecha_pedido < now() - make_interval(hours => ${HORAS_RESERVA_PAGO})
-      limit 25`
+        and p.fecha_pedido < dateadd(hour, ${-HORAS_RESERVA_PAGO}, ${NOW})`
     for (const v of vencidos) {
       // Antes de cancelar, confirmar con Wompi que de verdad no se pagó.
       const tx = await consultarPorReferencia(v.referencia).catch(() => null)
@@ -312,7 +315,7 @@ export async function expirarPendientes() {
         continue
       }
       await sql.begin(async (q) => {
-        const [bloq] = await q`select estado from pedidos where id = ${v.id} for update`
+        const [bloq] = await q`select estado from pedidos with (updlock, rowlock) where id = ${v.id}`
         if (bloq?.estado === 'pendiente') await cancelarYRestock(q, v.id)
       })
     }
@@ -325,8 +328,8 @@ export async function actualizarEstadoPedido(id, estado, mensaje = '') {
   const sql = db()
   const [actual] = await sql`
     select p.estado, p.usuario_id, u.nombre, u.correo,
-           (select metodo_pago from pagos where pedido_id = p.id order by id desc limit 1) as metodo,
-           (select estado from pagos where pedido_id = p.id order by id desc limit 1) as pago_estado
+           (select top (1) metodo_pago from pagos where pedido_id = p.id order by id desc) as metodo,
+           (select top (1) estado from pagos where pedido_id = p.id order by id desc) as pago_estado
     from pedidos p join usuarios u on u.id = p.usuario_id where p.id = ${id}`
   if (!actual) fallar('Pedido no encontrado', 404)
   if (actual.estado === estado) return pedidoPorId(id)
@@ -369,9 +372,10 @@ export async function conciliarTransaccion(tx) {
     const [pago] = await q`
       select pg.id, pg.pedido_id, pg.estado, pg.monto, p.estado as pedido_estado, p.usuario_id,
              u.nombre, u.correo
-      from pagos pg join pedidos p on p.id = pg.pedido_id join usuarios u on u.id = p.usuario_id
-      where pg.referencia = ${String(tx.reference)}
-      for update of pg, p`
+      from pagos pg with (updlock, rowlock)
+      join pedidos p with (updlock, rowlock) on p.id = pg.pedido_id
+      join usuarios u on u.id = p.usuario_id
+      where pg.referencia = ${String(tx.reference)}`
     if (!pago) return { ignorada: true }
     const base = { pedido_id: pago.pedido_id, estado_transaccion: tx.status }
 
@@ -421,9 +425,9 @@ export async function conciliarTransaccion(tx) {
 export async function verificarPagoPedido(usuario, pedidoId, transaccionId = '') {
   const sql = db()
   const [pg] = await sql`
-    select pg.referencia, pg.estado from pagos pg join pedidos p on p.id = pg.pedido_id
+    select top (1) pg.referencia, pg.estado from pagos pg join pedidos p on p.id = pg.pedido_id
     where p.id = ${pedidoId} and p.usuario_id = ${usuario.id} and pg.metodo_pago = 'wompi'
-    order by pg.id desc limit 1`
+    order by pg.id desc`
   if (!pg) fallar('Pedido no encontrado', 404)
 
   let estadoTx = pg.estado === 'aprobado' ? 'APPROVED' : null

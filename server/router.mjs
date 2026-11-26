@@ -243,7 +243,7 @@ export async function manejar(req) {
     if (ctx.recurso === 'salud') {
       // Comprobación rápida: la función responde y la base de datos también.
       const { db } = await import('./db.mjs')
-      await db()`select 1`
+      await db()`select 1 as ok`
       return json({ ok: true, hora: new Date().toISOString() })
     }
     const handler = TABLA[`${ctx.metodo} /${ctx.recurso}`]

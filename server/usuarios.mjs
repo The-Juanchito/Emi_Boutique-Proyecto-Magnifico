@@ -1,11 +1,11 @@
 // Usuarios: autenticación, registro, recuperación de contraseña, perfil, direcciones y cuentas del equipo.
 // Port de las funciones equivalentes de api/index.php (mismos mensajes y mismas formas de respuesta).
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
-import { db } from './db.mjs'
+import { db, frag, crudo, NOW } from './db.mjs'
 import { fallar } from './http.mjs'
 import { texto, recortar, esCorreo, enlaceAbsoluto } from './util.mjs'
 import {
-  COLUMNAS_USUARIO,
+  COLUMNAS_USUARIO, COLUMNAS_USUARIO_INSERTED,
   formatearUsuario,
   hashPassword,
   verificarPassword,
@@ -79,8 +79,9 @@ export async function registrarUsuario(datos) {
   let fila
   try {
     ;[fila] = await sql`
-      insert into usuarios (nombre, correo, password, rol) values (${nombre}, ${correo}, ${hash}, 'cliente')
-      returning ${sql.unsafe(COLUMNAS_USUARIO)}`
+      insert into usuarios (nombre, correo, password, rol)
+      output ${sql.unsafe(COLUMNAS_USUARIO_INSERTED)}
+      values (${nombre}, ${correo}, ${hash}, 'cliente')`
   } catch (e) {
     if (esDuplicado(e)) fallar('Ya existe una cuenta con ese correo', 409)
     throw e
@@ -116,9 +117,9 @@ export async function loginGoogle(credential) {
   const sql = db()
   const nombre = (info.name !== '' ? info.name : info.email).slice(0, 150)
   const [u] = await sql`
-    select ${sql.unsafe(COLUMNAS_USUARIO)}, estado, google_sub from usuarios
+    select top (1) ${sql.unsafe(COLUMNAS_USUARIO)}, estado, google_sub from usuarios
     where google_sub = ${info.sub} or lower(correo) = ${info.email}
-    order by (google_sub = ${info.sub}) desc nulls last limit 1`
+    order by case when google_sub = ${info.sub} then 0 else 1 end`
 
   if (u) {
     if (Number(u.estado) !== 1) fallar('Tu cuenta está desactivada. Contacta a la tienda.', 403)
@@ -131,8 +132,8 @@ export async function loginGoogle(credential) {
   try {
     const [nuevo] = await sql`
       insert into usuarios (nombre, correo, password, rol, google_sub)
-      values (${nombre}, ${info.email.slice(0, 255)}, ${hash}, 'cliente', ${info.sub})
-      returning ${sql.unsafe(COLUMNAS_USUARIO)}`
+      output ${sql.unsafe(COLUMNAS_USUARIO_INSERTED)}
+      values (${nombre}, ${info.email.slice(0, 255)}, ${hash}, 'cliente', ${info.sub})`
     return formatearUsuario(nuevo)
   } catch (e) {
     if (esDuplicado(e)) fallar('Ya existe una cuenta con ese correo', 409)
@@ -162,7 +163,7 @@ export async function solicitarRecuperacion(correo) {
     // Solo se guarda el hash del token: una fuga de la BD no permite restablecer contraseñas.
     await sql`
       insert into recuperaciones (usuario_id, token, usado, expira)
-      values (${u.id}, ${sha256(token)}, false, now() + interval '1 hour')`
+      values (${u.id}, ${sha256(token)}, 0, dateadd(hour, 1, ${NOW}))`
     const enlace = '/restablecer?token=' + token
     await enviarCorreo(
       u.correo,
@@ -191,12 +192,12 @@ export async function restablecerPassword(token, password) {
   const sql = db()
   // Marcar como usado y leer el usuario en una sola sentencia: el enlace sirve una única vez.
   const [r] = await sql`
-    update recuperaciones set usado = true
-    where token = ${sha256(token)} and usado = false and expira > now()
-    returning usuario_id`
+    update recuperaciones set usado = 1
+    output inserted.usuario_id
+    where token = ${sha256(token)} and usado = 0 and expira > ${NOW}`
   if (!r) fallar('El enlace no es válido o ya fue usado', 400)
   await sql`update usuarios set password = ${hash} where id = ${r.usuario_id} and estado = 1`
-  await sql`update recuperaciones set usado = true where usuario_id = ${r.usuario_id} and usado = false`
+  await sql`update recuperaciones set usado = 1 where usuario_id = ${r.usuario_id} and usado = 0`
 }
 
 /** Código de 6 dígitos (15 minutos). Siempre responde igual exista o no la cuenta. */
@@ -211,10 +212,10 @@ export async function solicitarCodigoRecuperacion(correo) {
     const codigo = String(randomInt(0, 1000000)).padStart(6, '0')
     // Un solo código válido por usuario: anulamos los anteriores.
     await sql.begin(async (tx) => {
-      await tx`update recuperaciones_codigo set usado = true where usuario_id = ${u.id} and usado = false`
+      await tx`update recuperaciones_codigo set usado = 1 where usuario_id = ${u.id} and usado = 0`
       await tx`
         insert into recuperaciones_codigo (usuario_id, correo, codigo, usado, expira)
-        values (${u.id}, ${u.correo.toLowerCase()}, ${codigo}, false, now() + interval '15 minutes')`
+        values (${u.id}, ${u.correo.toLowerCase()}, ${codigo}, 0, dateadd(minute, 15, ${NOW}))`
     })
     await enviarCorreo(
       u.correo,
@@ -248,12 +249,12 @@ export async function restablecerPorCodigo(correo, codigo, password) {
   // Transacción con bloqueo de la fila: evita adivinar el código con peticiones en paralelo.
   const resultado = await sql.begin(async (tx) => {
     const [fila] = await tx`
-      select id, usuario_id, codigo, intentos from recuperaciones_codigo
-      where lower(correo) = lower(${correo}) and usado = false and expira > now()
-      order by fecha_creacion desc, id desc limit 1 for update`
+      select top (1) id, usuario_id, codigo, intentos from recuperaciones_codigo with (updlock, rowlock)
+      where lower(correo) = lower(${correo}) and usado = 0 and expira > ${NOW}
+      order by fecha_creacion desc, id desc`
     if (!fila) return 'expirado'
     if (fila.intentos >= 5) {
-      await tx`update recuperaciones_codigo set usado = true where id = ${fila.id}`
+      await tx`update recuperaciones_codigo set usado = 1 where id = ${fila.id}`
       return 'intentos'
     }
     const a = Buffer.from(String(fila.codigo))
@@ -262,7 +263,7 @@ export async function restablecerPorCodigo(correo, codigo, password) {
       await tx`update recuperaciones_codigo set intentos = intentos + 1 where id = ${fila.id}`
       return 'incorrecto'
     }
-    await tx`update recuperaciones_codigo set usado = true where id = ${fila.id}`
+    await tx`update recuperaciones_codigo set usado = 1 where id = ${fila.id}`
     await tx`update usuarios set password = ${hash} where id = ${fila.usuario_id} and estado = 1`
     return 'ok'
   })
@@ -335,7 +336,7 @@ export async function listarDirecciones(usuario) {
   const sql = db()
   const filas = await sql`
     select id, alias, direccion, direccion_info, ciudad, telefono, predeterminada
-    from direcciones where usuario_id = ${usuario.id} and activo = true
+    from direcciones where usuario_id = ${usuario.id} and activo = 1
     order by predeterminada desc, id asc`
   return filas.map(direccionFormateada)
 }
@@ -344,7 +345,7 @@ export async function direccionDelUsuario(usuario, id) {
   const sql = db()
   const [d] = await sql`
     select id, usuario_id, alias, direccion, direccion_info, ciudad, telefono, predeterminada
-    from direcciones where id = ${Number(id)} and usuario_id = ${usuario.id} and activo = true`
+    from direcciones where id = ${Number(id)} and usuario_id = ${usuario.id} and activo = 1`
   if (!d) fallar('Dirección no encontrada', 404)
   return d
 }
@@ -361,10 +362,10 @@ export async function crearDireccion(usuario, datos = {}) {
   const sql = db()
   await sql.begin(async (tx) => {
     // Bloquea al usuario para serializar altas simultáneas (la primera dirección siempre es la predeterminada).
-    await tx`select id from usuarios where id = ${usuario.id} for update`
-    const [{ n }] = await tx`select count(*)::int as n from direcciones where usuario_id = ${usuario.id} and activo = true`
+    await tx`select id from usuarios with (updlock, rowlock) where id = ${usuario.id}`
+    const [{ n }] = await tx`select count(*) as n from direcciones where usuario_id = ${usuario.id} and activo = 1`
     if (n === 0) predet = true
-    if (predet) await tx`update direcciones set predeterminada = false where usuario_id = ${usuario.id} and activo = true`
+    if (predet) await tx`update direcciones set predeterminada = 0 where usuario_id = ${usuario.id} and activo = 1`
     await tx`
       insert into direcciones (usuario_id, alias, direccion, direccion_info, ciudad, telefono, predeterminada)
       values (${usuario.id}, ${nuloSiVacio(alias)}, ${direccion}, ${nuloSiVacio(info)}, ${nuloSiVacio(ciudad)},
@@ -387,7 +388,7 @@ export async function actualizarDireccion(usuario, id, datos = {}) {
 
   const sql = db()
   await sql.begin(async (tx) => {
-    if (predet) await tx`update direcciones set predeterminada = false where usuario_id = ${usuario.id} and activo = true`
+    if (predet) await tx`update direcciones set predeterminada = 0 where usuario_id = ${usuario.id} and activo = 1`
     await tx`
       update direcciones set alias = ${nuloSiVacio(alias)}, direccion = ${direccion}, direccion_info = ${nuloSiVacio(info)},
         ciudad = ${nuloSiVacio(ciudad)}, telefono = ${nuloSiVacio(telefono)}, predeterminada = ${predet}
@@ -401,11 +402,11 @@ export async function eliminarDireccion(usuario, id) {
   const sql = db()
   // Baja lógica: conserva el histórico de pedidos que referencian la dirección
   await sql.begin(async (tx) => {
-    await tx`update direcciones set activo = false, predeterminada = false where id = ${Number(id)} and usuario_id = ${usuario.id}`
+    await tx`update direcciones set activo = 0, predeterminada = 0 where id = ${Number(id)} and usuario_id = ${usuario.id}`
     if (actual.predeterminada) {
       await tx`
-        update direcciones set predeterminada = true
-        where id = (select id from direcciones where usuario_id = ${usuario.id} and activo = true order by id asc limit 1)`
+        update direcciones set predeterminada = 1
+        where id = (select top (1) id from direcciones where usuario_id = ${usuario.id} and activo = 1 order by id asc)`
     }
   })
   return { direcciones: await listarDirecciones(usuario) }
@@ -416,19 +417,19 @@ export async function eliminarDireccion(usuario, id) {
 export async function buscarUsuariosAdmin(q) {
   q = recortar(q, 100)
   const sql = db()
-  const patron = '%' + q.replace(/[\\%_]/g, '\\$&') + '%'
+  const patron = '%' + q.replace(/[\\%_[]/g, '\\$&') + '%'
   const filas =
     q === ''
-      ? await sql`select id, nombre, correo from usuarios where estado = 1 order by nombre limit 20`
+      ? await sql`select top (20) id, nombre, correo from usuarios where estado = 1 order by nombre`
       : await sql`
-          select id, nombre, correo from usuarios
-          where estado = 1 and (nombre ilike ${patron} or correo ilike ${patron})
-          order by nombre limit 20`
+          select top (20) id, nombre, correo from usuarios
+          where estado = 1 and (nombre like ${patron} escape '\\' or correo like ${patron} escape '\\')
+          order by nombre`
   return filas.map((u) => ({ usuario_id: Number(u.id), nombre: u.nombre, correo: u.correo }))
 }
 
 export async function contarAdmins(cliente = db()) {
-  const [r] = await cliente`select count(*)::int as n from usuarios where rol = 'administrador' and estado = 1`
+  const [r] = await cliente`select count(*) as n from usuarios where rol = 'administrador' and estado = 1`
   return r.n
 }
 
@@ -487,8 +488,8 @@ export async function actualizarCuentaAdmin(actor, id, datos = {}) {
 
   await sql.begin(async (tx) => {
     // Se bloquean los administradores activos para que dos cambios simultáneos no dejen la tienda sin admin.
-    await tx`select id from usuarios where rol = 'administrador' and estado = 1 for update`
-    const [actual] = await tx`select id, rol, estado from usuarios where id = ${id} for update`
+    await tx`select id from usuarios with (updlock, rowlock) where rol = 'administrador' and estado = 1`
+    const [actual] = await tx`select id, rol, estado from usuarios with (updlock, rowlock) where id = ${id}`
     if (!actual) fallar('Cuenta no encontrada', 404)
     const eraAdminActivo = actual.rol === 'administrador' && Number(actual.estado) === 1
 
@@ -511,7 +512,11 @@ export async function actualizarCuentaAdmin(actor, id, datos = {}) {
     if (hash) cambios.password = hash
 
     const columnas = Object.keys(cambios)
-    if (columnas.length) await tx`update usuarios set ${tx(cambios, columnas)} where id = ${id}`
+    if (columnas.length) {
+      // Las columnas salen de una lista fija (rol, estado, password); nunca de datos del usuario.
+      const sets = columnas.map((c) => frag`${crudo(c)} = ${cambios[c]}`).reduce((a, f) => frag`${a}, ${f}`)
+      await tx`update usuarios set ${sets} where id = ${id}`
+    }
   })
   return listarCuentasAdmin()
 }
