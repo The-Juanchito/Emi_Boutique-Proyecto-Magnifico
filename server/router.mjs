@@ -24,7 +24,9 @@ import { rutaChat } from './ai.mjs'
 export function crearContexto(req) {
   const url = new URL(req.url)
   const seg = url.pathname.split('/').filter(Boolean)
-  if (seg[0] === 'api') seg.shift()
+  // Netlify puede entregar la ruta como /api/x o como /.netlify/functions/api/x (reescritura)
+  if (seg[0] === '.netlify' && seg[1] === 'functions') seg.splice(0, 3)
+  else if (seg[0] === 'api') seg.shift()
   let cuerpoCache = null
   const ctx = {
     req,

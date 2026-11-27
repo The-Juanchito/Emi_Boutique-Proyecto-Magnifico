@@ -357,3 +357,12 @@ test('carrito, reseñas y notificaciones funcionan con sesión', async () => {
   assert.ok(n.items.length > 0 && n.no_leidas > 0)
   assert.equal((await admin.patch('/notificaciones')).data.no_leidas, 0)
 })
+
+test('la ruta de reescritura de Netlify (/.netlify/functions/api/...) también funciona', async () => {
+  const { manejar } = await import('../server/router.mjs')
+  const r = await manejar(new Request('http://localhost/.netlify/functions/api/categorias'))
+  const j = await r.json()
+  assert.equal(r.status, 200)
+  assert.equal(j.ok, true)
+  assert.ok(Array.isArray(j.categorias))
+})
