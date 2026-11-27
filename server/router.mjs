@@ -241,10 +241,34 @@ export async function manejar(req) {
     if (ctx.metodo === 'OPTIONS') return new Response(null, { status: 204 })
     comprobarOrigen(ctx)
     if (ctx.recurso === 'salud') {
-      // Comprobación rápida: la función responde y la base de datos también.
-      const { db } = await import('./db.mjs')
-      await db()`select 1`
-      return json({ ok: true, hora: new Date().toISOString() })
+      // Diagnóstico: dice qué variables faltan (nunca sus valores) y si la base responde.
+      const requeridas = ['DATABASE_URL', 'SESSION_SECRET', 'SITE_URL']
+      const faltantes = requeridas.filter((v) => !process.env[v])
+      if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.length < 32) faltantes.push('SESSION_SECRET (muy corta: mínimo 32 caracteres)')
+      const estado = {
+        hora: new Date().toISOString(),
+        faltantes,
+        opcionales: {
+          fotos_supabase: !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+          correo: !!process.env.MAIL_HOST,
+          wompi: !!process.env.WOMPI_PUBLIC_KEY,
+          pagos_simulados: process.env.PAGOS_SIMULADOS !== '0',
+        },
+      }
+      if (!process.env.DATABASE_URL) return json({ ok: false, base_de_datos: 'sin DATABASE_URL', ...estado }, 503)
+      try {
+        const { db } = await import('./db.mjs')
+        const [r] = await db()`select (select count(*)::int from productos) as productos`
+        return json({ ok: faltantes.length === 0, base_de_datos: 'conectada', productos: r.productos, ...estado })
+      } catch (e) {
+        const motivo = /password authentication|SASL|28P01/i.test(e.message + e.code) ? 'usuario o contraseña incorrectos en DATABASE_URL'
+          : /ENOTFOUND|getaddrinfo/i.test(e.message) ? 'la dirección del servidor en DATABASE_URL no existe'
+          : /ECONNREFUSED|ETIMEDOUT/i.test(e.message) ? 'no se pudo llegar al servidor (¿usaste el Transaction pooler, puerto 6543?)'
+          : /Tenant or user not found/i.test(e.message) ? 'el usuario del pooler está mal (debe ser postgres.TU_REF)'
+          : 'error al consultar: ' + String(e.code || e.message).slice(0, 80)
+        console.error('[salud] base de datos', e)
+        return json({ ok: false, base_de_datos: motivo, ...estado }, 503)
+      }
     }
     const handler = TABLA[`${ctx.metodo} /${ctx.recurso}`]
     if (!handler) fallar('Ruta no encontrada', 404)

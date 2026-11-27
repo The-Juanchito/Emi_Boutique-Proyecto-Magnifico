@@ -86,7 +86,7 @@ export default function Catalogo() {
 
       {offline && (
         <p className="empty" style={{ textAlign: 'center' }}>
-          ⚠️ No se pudo conectar con la API (revisa `npm run api`). Mostrando datos locales.
+          ⚠️ No se pudo cargar el catálogo desde el servidor. Mostrando datos de ejemplo. Abre /api/salud para ver el motivo.
         </p>
       )}
 
